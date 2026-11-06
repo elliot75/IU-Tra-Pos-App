@@ -51,9 +51,12 @@ async function request(url, options) {
   if (!response.ok) { const error = new Error(result.error?.message || '無法完成操作'); error.status = response.status; throw error; }
   return result.data;
 }
+$('#products').addEventListener('error', event => {
+  if (event.target.tagName === 'IMG') event.target.hidden = true;
+}, true);
 function showProducts(category) {
   const products = state.catalog.products.filter(p => !category || p.categoryId === category);
-  $('#products').innerHTML = products.length ? products.map(p => `<button type="button" class="product" data-product="${escapeHtml(p.id)}"><span class="product-art"><span class="cup"></span></span><span class="product-info"><strong>${escapeHtml(p.nameZh)}</strong><small>${escapeHtml(p.nameVi)}</small><span class="product-price">${money(p.variants.reduce((a, b) => BigInt(a.price) < BigInt(b.price) ? a : b).price)} 起 <span class="plus">＋</span></span></span></button>`).join('') : '<p>此分類目前沒有商品。</p>';
+  $('#products').innerHTML = products.length ? products.map(p => `<button type="button" class="product" data-product="${escapeHtml(p.id)}"><span class="product-art"><span class="cup"></span>${p.imageUrl ? `<img src="${escapeHtml(p.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span><span class="product-info"><strong>${escapeHtml(p.nameZh)}</strong><small>${escapeHtml(p.nameVi)}</small><span class="product-price">${money(p.variants.reduce((a, b) => BigInt(a.price) < BigInt(b.price) ? a : b).price)} 起 <span class="plus">＋</span></span></span></button>`).join('') : '<p>此分類目前沒有商品。</p>';
 }
 function showCatalog(catalog) {
   state.catalog = catalog;

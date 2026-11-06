@@ -34,7 +34,13 @@ export function validateCatalog(catalog, { publishing = false } = {}) {
     text(category.nameZh, '分類中文名稱'); text(category.nameVi, '分類越文名稱');
   }
   for (const product of catalog.products) {
-    fields(product, ['id', 'categoryId', 'nameZh', 'nameVi', 'variants', 'toppings', ...(Object.hasOwn(product ?? {}, 'optionGroups') ? ['optionGroups'] : [])], '商品');
+    fields(product, ['id', 'categoryId', 'nameZh', 'nameVi', 'variants', 'toppings', ...(Object.hasOwn(product ?? {}, 'optionGroups') ? ['optionGroups'] : []), ...(Object.hasOwn(product ?? {}, 'imageUrl') ? ['imageUrl'] : [])], '商品');
+    if (Object.hasOwn(product, 'imageUrl') && product.imageUrl !== '') {
+      if (typeof product.imageUrl !== 'string' || product.imageUrl.length > 2048 || /[\s\u0000-\u001f\u007f]/.test(product.imageUrl)) fail('圖片網址不正確');
+      let url;
+      try { url = new URL(product.imageUrl); } catch { fail('圖片網址不正確'); }
+      if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) fail('圖片網址須為 HTTPS 網址');
+    }
     id(product.id); unique(products, product.id); id(product.categoryId);
     if (!categories.has(product.categoryId)) fail('商品分類不存在');
     text(product.nameZh, '商品中文名稱'); text(product.nameVi, '商品越文名稱');

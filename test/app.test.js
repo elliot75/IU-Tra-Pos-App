@@ -19,10 +19,18 @@ test('點餐預選預設選項、支援舊菜單並送出實際選擇供伺服�
     DISPLAY_CHANNEL: 'display', DISPLAY_TIMEOUT: 1000, DISPLAY_HEARTBEAT: 1000, displayId: () => 'session', isDisplayId: () => true,
     setInterval() {}, fetch: async (path, options) => { calls.push({ path, options }); return { ok: true, json: async () => ({ data: { items: [], subtotal: '24000', total: '24000' } }) }; }
   });
-  vm.runInContext(`${source}\nglobalThis.testing = { state, openProduct };`, context);
+  vm.runInContext(`${source}\nglobalThis.testing = { state, openProduct, showProducts };`, context);
   const group = { id: 'ice', nameZh: '冰量', minSelect: 1, maxSelect: 1, values: [{ id: 'less', nameZh: '少冰', nameVi: 'Ít' }, { id: 'normal', nameZh: '正常', nameVi: 'Thường' }], defaultValueIds: ['less'] };
   const product = { id: 'p', nameZh: '茶', nameVi: 'Tra', variants: [{ id: 'v', label: '700', price: '24000' }], toppings: [], optionGroups: [group] };
   context.testing.state.catalog = { products: [product], release: 'release' };
+  context.testing.showProducts();
+  assert.doesNotMatch(get('#products').innerHTML, /<img/);
+  product.imageUrl = 'https://example.com/a.jpg?x=1&y=2';
+  context.testing.showProducts();
+  assert.match(get('#products').innerHTML, /src="https:\/\/example.com\/a.jpg\?x=1&amp;y=2"/);
+  const failedImage = { tagName: 'IMG', hidden: false };
+  get('#products').listeners.error({ target: failedImage });
+  assert.equal(failedImage.hidden, true);
   context.testing.openProduct('p');
   assert.match(get('#option-groups').innerHTML, /type="radio" name="option-group-0" data-option-group="0" value="less" checked/);
   assert.doesNotMatch(get('#option-groups').innerHTML, /value="normal" checked/);

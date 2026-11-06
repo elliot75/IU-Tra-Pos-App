@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import { catalog } from '../src/catalog.js';
 import { validateCatalog } from '../src/catalog-validation.js';
 
+test('商品圖片接受可選的 HTTPS 網址，拒絕不安全的網址', () => {
+  const data = structuredClone({ categories: catalog.categories, products: catalog.products });
+  for (const imageUrl of [undefined, '', 'https://images.example.com/tea.jpg?version=1']) {
+    if (imageUrl === undefined) delete data.products[0].imageUrl; else data.products[0].imageUrl = imageUrl;
+    assert.doesNotThrow(() => validateCatalog(data, { publishing: true }));
+  }
+  for (const imageUrl of [null, 123, 'http://example.com/a.jpg', 'javascript:alert(1)', 'https://user:password@example.com/a', 'https://example.com/a b', '//example.com/a']) {
+    data.products[0].imageUrl = imageUrl;
+    assert.throws(() => validateCatalog(data));
+  }
+});
+
 test('預設選項可省略或部分設定，且必須唯一、屬於群組並符合上限', () => {
   const data = structuredClone({ categories: catalog.categories, products: catalog.products });
   data.products[0].optionGroups = [{ id: 'ice', nameZh: '冰量', nameVi: 'Đá', minSelect: 2, maxSelect: 2, values: [

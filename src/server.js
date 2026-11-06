@@ -54,7 +54,7 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
       if (req.method === 'GET' && files.has(path)) {
         const [name, type] = files.get(path);
         const content = await readFile(new URL(`../public/${name}`, import.meta.url));
-        res.writeHead(200, { 'content-type': type, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
+        res.writeHead(200, { 'content-type': type, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; img-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
         return res.end(content);
       }
       if (req.method === 'GET' && path === '/api/v1/auth/config') return send(res, 200, { request_id: requestId, data: { allowInsecureHttp: authTransport.allowsInsecureHttp(req) } }, requestId);
