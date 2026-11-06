@@ -1,0 +1,40 @@
+import { catalog } from './catalog.js';
+
+export class ValidationError extends Error {
+  constructor(message) { super(message); this.name = 'ValidationError'; }
+}
+
+const maxMoney = 1000000000000n;
+function fail(message) { throw new ValidationError(message); }
+
+// 只接受產品與規格識別，金額一律來自伺服器菜單，並以 BigInt 計算。
+export function quoteOrder(input, selectedCatalog = catalog) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) fail('訂單格式不正確');
+  if (input.menuRelease !== selectedCatalog.release) fail('菜單版本不正確，請重新載入');
+  if (!Array.isArray(input.items) || input.items.length === 0 || input.items.length > 100) fail('請選擇商品，最多 100 筆明細');
+  let total = 0n;
+  const items = input.items.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) fail('商品明細格式不正確');
+    const product = selectedCatalog.products.find(p => p.id === item.productId);
+    const variant = product?.variants.find(v => v.id === item.variantId);
+    if (!product || !variant) fail('商品或容量不存在');
+    if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 100) fail('杯數須為 1 至 100 的整數');
+    if (!Array.isArray(item.toppings) || item.toppings.length > product.toppings.length) fail('配料格式不正確');
+    const seen = new Set();
+    let unitPrice = BigInt(variant.price);
+    const toppings = item.toppings.map(selection => {
+      if (!selection || typeof selection !== 'object' || Array.isArray(selection)) fail('配料格式不正確');
+      const topping = product.toppings.find(t => t.id === selection.id);
+      if (!topping || seen.has(selection.id)) fail('配料不存在或重複');
+      seen.add(selection.id);
+      if (!Number.isInteger(selection.portions) || selection.portions < 1 || selection.portions > topping.maxPortions) fail('配料份數超出範圍');
+      unitPrice += BigInt(topping.price) * BigInt(selection.portions);
+      return { id: topping.id, nameZh: topping.nameZh, nameVi: topping.nameVi, portions: selection.portions, price: topping.price };
+    });
+    const lineTotal = unitPrice * BigInt(item.quantity);
+    total += lineTotal;
+    if (total > maxMoney) fail('訂單金額超出上限');
+    return { productId: product.id, variantId: variant.id, nameZh: product.nameZh, nameVi: product.nameVi, variant: variant.label, quantity: item.quantity, toppings, unitPrice: String(unitPrice), lineTotal: String(lineTotal) };
+  });
+  return { menuRelease: selectedCatalog.release, currency: 'VND', items, subtotal: String(total), total: String(total) };
+}

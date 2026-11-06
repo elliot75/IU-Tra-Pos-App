@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IUTRA POS｜點餐</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">IU</span><span>IUTRA<small>門市點餐</small></span></div>
+    <div class="header-actions"><a href="/admin">商品管理</a><div class="top-status"><span class="status-dot"></span><span id="catalog-status">載入菜單中</span></div></div>
+  </header>
+  <div class="notice" id="notice">訂單目前不會儲存，也不能收款。</div>
+  <main class="workspace">
+    <section class="menu-area" aria-labelledby="menu-title">
+      <div class="section-heading"><div><p class="kicker">選擇飲品</p><h1 id="menu-title">今天想喝什麼？</h1><p class="subtext">選擇品項，再設定容量與配料。</p></div><span class="menu-tag" id="menu-tag">菜單</span></div>
+      <div class="categories" id="categories"></div>
+      <div id="products" class="product-grid" aria-live="polite"><p>正在載入菜單⋯</p></div>
+      <div class="menu-footer"><span class="leaf">✳</span><p>每一杯，從喜歡的味道開始。<br><small>Chọn món theo cách bạn thích.</small></p></div>
+    </section>
+    <aside class="order-panel" aria-labelledby="order-title">
+      <div class="order-header"><div><p class="kicker">目前點餐</p><h2 id="order-title">訂單小結</h2></div><span id="item-count" class="count">0 杯</span></div>
+      <div id="order-items" class="order-items" aria-live="polite"></div>
+      <div class="order-footer">
+        <div class="amount-row"><span>商品小計</span><strong id="subtotal">0 ₫</strong></div>
+        <div class="amount-row total"><span>應付金額</span><strong id="total">0 ₫</strong></div>
+        <p id="order-error" class="error" role="alert"></p>
+        <button class="checkout" type="button" disabled>結帳功能開發中</button>
+        <p class="footer-note">此畫面僅供點餐與計價測試</p>
+      </div>
+    </aside>
+  </main>
+  <dialog id="product-dialog" aria-labelledby="dialog-title">
+    <form id="product-form">
+      <div class="dialog-head"><div><p class="kicker">設定飲品</p><h2 id="dialog-title">烏龍茶</h2><span id="dialog-subtitle" class="subtext"></span></div><button class="close" type="button" aria-label="關閉">×</button></div>
+      <fieldset><legend>選擇容量</legend><div id="variants" class="variants"></div></fieldset>
+      <fieldset><legend>加點配料 <small>每杯份數</small></legend><div id="toppings"></div></fieldset>
+      <div class="quantity-line"><span>杯數</span><div class="stepper"><button type="button" data-quantity="-1" aria-label="減少杯數">−</button><output id="quantity">1</output><button type="button" data-quantity="1" aria-label="增加杯數">＋</button></div></div>
+      <button class="add-button" type="submit">加入訂單</button>
+    </form>
+  </dialog>
+</body>
+</html>

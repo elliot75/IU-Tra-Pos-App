@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IUTRA POS｜商品管理</title>
+  <link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/admin.css">
+  <script type="module" src="/admin.js"></script>
+</head>
+<body>
+<header class="topbar"><div class="brand"><span class="brand-mark">IU</span><span>IUTRA<small>商品管理</small></span></div><a href="/">返回點餐</a></header>
+<div class="notice">開發模式：菜單管理尚未具備具名帳號、門市權限與稽核，請勿公開至網路或用於正式營業。</div>
+<main class="admin-main">
+  <div class="admin-heading"><div><p class="kicker">菜單管理</p><h1>商品與售價</h1><p class="subtext">先編輯並儲存草稿，再發布給點餐畫面使用。</p></div><span class="menu-tag" id="revision">尚未載入</span></div>
+  <section class="access-panel" aria-labelledby="access-title"><div><h2 id="access-title">管理存取</h2><p>輸入本機環境中設定的管理權杖。權杖只保留在本頁記憶體中。</p></div><form id="access-form"><label for="token">管理權杖</label><div class="access-controls"><input id="token" type="password" autocomplete="off" required><button class="primary" type="submit">載入草稿</button></div></form></section>
+  <p id="message" class="message" role="status" aria-live="polite"></p>
+  <div id="editor" hidden>
+    <section class="editor-section"><div class="editor-header"><div><h2>分類</h2><p>為商品建立中越文分類。</p></div><button class="secondary" type="button" data-action="add-category">新增分類</button></div><div id="category-list"></div></section>
+    <section class="editor-section"><div class="editor-header"><div><h2>商品</h2><p>每個容量設定完整售價；配料價格按每杯份數計算。</p></div><button class="secondary" type="button" data-action="add-product">新增商品</button></div><div id="product-list"></div></section>
+    <div class="save-bar"><span id="dirty-status">草稿已載入</span><div><button class="secondary" type="button" id="save">儲存草稿</button><button class="primary" type="button" id="publish">發布菜單</button></div></div>
+  </div>
+</main>
+</body></html>
