@@ -3,20 +3,24 @@
 body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; }
 header { padding: 24px 6vw; display: flex; justify-content: space-between; align-items: center; background: #244d39; color: white; }
 header strong { font-size: 28px; letter-spacing: .12em; }
-main { width: min(900px, 88vw); margin: 6vh auto; flex: 1; }
-.eyebrow { color: #6b806d; letter-spacing: .2em; font-size: 14px; }
-h1 { font-size: clamp(32px, 4vw, 50px); margin: 0 0 14px; }
-#message { font-size: 20px; color: #66776a; }
-.item { padding: 22px 0; border-bottom: 1px solid #d8e1d5; }
-.item-title { display: flex; justify-content: space-between; gap: 20px; font-size: 24px; font-weight: 700; }
-.item-detail { margin: 8px 0 0; font-size: 18px; color: #5b6b5e; line-height: 1.6; }
-#amount { margin-top: 32px; display: flex; justify-content: space-between; align-items: baseline; gap: 20px; font-size: 24px; }
+.display-layout { width: min(1440px, 92vw); margin: 32px auto; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); align-items: start; gap: clamp(24px, 3vw, 48px); }
+.display-layout:has(#touch-menu[hidden]) { display: block; width: min(900px, 88vw); margin: 6vh auto; }
+.order-summary { min-width: 0; padding: 26px; background: #fff; border: 1px solid #d8e1d5; border-radius: 14px; }
+.display-layout:has(#touch-menu:not([hidden])) .order-summary { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; }
+h1 { font-size: clamp(24px, 2.2vw, 30px); margin: 0 0 10px; }
+#message { font-size: 15px; color: #66776a; }
+.item { padding: 16px 0; border-bottom: 1px solid #d8e1d5; }
+.item-title { display: flex; justify-content: space-between; gap: 16px; font-size: 18px; font-weight: 700; }
+.item-title > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.item-title > :last-child { flex-shrink: 0; white-space: nowrap; }
+.item-detail { margin: 6px 0 0; font-size: 15px; color: #5b6b5e; line-height: 1.6; overflow-wrap: anywhere; }
+#amount { margin-top: 24px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; font-size: 16px; }
 #amount[hidden] { display: none; }
-#total { color: #244d39; font-size: clamp(36px, 5vw, 56px); }
+#total { color: #244d39; font-size: clamp(26px, 3vw, 36px); }
 footer { padding: 18px 6vw; color: #66776a; font-size: 14px; }
 
-/* 顧客觸控點餐：延續客顯的茶綠色與寬鬆排版。 */
-#touch-menu { margin-top: 46px; padding-top: 28px; border-top: 2px solid #c7d7c7; }
+/* 顧客觸控點餐：左側選餐，右側核對明細。 */
+#touch-menu { min-width: 0; }
 #touch-menu[hidden] { display: none; }
 .menu-heading { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
 .menu-heading h2 { margin: 0; font-size: 28px; }
@@ -41,5 +45,10 @@ footer { padding: 18px 6vw; color: #66776a; font-size: 14px; }
 .touch-note { display: block; margin: 20px 0; font-weight: 700; }.touch-note small { font-weight: 400; color: #66776a; }.touch-note input { display: block; width: 100%; min-height: 48px; margin-top: 8px; padding: 10px; border: 1px solid #aabfaf; border-radius: 7px; font: inherit; }
 .touch-submit { width: 100%; min-height: 54px; border: 0; border-radius: 9px; background: #244d39; color: white; font: inherit; font-size: 18px; font-weight: 700; cursor: pointer; }
 #touch-menu button:focus-visible, #touch-dialog button:focus-visible, #touch-dialog input:focus-visible { outline: 3px solid #b17716; outline-offset: 2px; }
+@media (max-width: 767px) {
+  .display-layout { width: min(92vw, 600px); margin: 24px auto; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .display-layout:has(#touch-menu:not([hidden])) .order-summary { position: static; max-height: none; overflow-y: visible; }
+  .order-summary { padding: 20px; }
+}
 @media (max-width: 480px) { .touch-products { grid-template-columns: repeat(2, minmax(0, 1fr)); }.touch-product { padding: 14px; }.touch-product strong { font-size: 17px; } #touch-form { padding: 20px; } }
 .touch-product-art { position: relative; display: grid; place-items: center; align-self: stretch; height: 110px; overflow: hidden; border-radius: 8px; background: #e3eee2; color: #53745c; }.touch-product-fallback { font-weight: 800; letter-spacing: .1em; }.touch-product-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
