@@ -29,7 +29,7 @@ export function quoteOrder(input, selectedCatalog = catalog) {
       seen.add(selection.id);
       if (!Number.isInteger(selection.portions) || selection.portions < 1 || selection.portions > topping.maxPortions) fail('配料份數超出範圍');
       unitPrice += BigInt(topping.price) * BigInt(selection.portions);
-      return { id: topping.id, nameZh: topping.nameZh, nameVi: topping.nameVi, portions: selection.portions, price: topping.price };
+      return { id: topping.id, nameZh: topping.nameZh, nameVi: topping.nameVi, unit: topping.unit, portions: selection.portions, price: topping.price };
     });
     const groups = product.optionGroups ?? [];
     const selections = item.options === undefined ? [] : item.options;

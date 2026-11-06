@@ -8,7 +8,7 @@ const quote = items => quoteOrder({ menuRelease: 'example-v1', items });
 test('商品選項以伺服器名稱建立快照，不影響價格', () => {
   const menu = structuredClone(catalog);
   menu.products[0].optionGroups = [
-    { id: 'ice', nameZh: '冰量', nameVi: 'Đá', minSelect: 1, maxSelect: 1, values: [{ id: 'less', nameZh: '少冰', nameVi: 'Ít đá' }] },
+    { id: 'ice', nameZh: '冰量', nameVi: 'Đá', minSelect: 1, maxSelect: 1, defaultValueIds: ['less'], values: [{ id: 'less', nameZh: '少冰', nameVi: 'Ít đá' }] },
     { id: 'sugar', nameZh: '甜度', nameVi: 'Đường', minSelect: 0, maxSelect: 1, values: [{ id: 'half', nameZh: '半糖', nameVi: 'Nửa đường' }] }
   ];
   const makeQuote = options => quoteOrder({ menuRelease: menu.release, items: [{ ...item(), options }] }, menu);

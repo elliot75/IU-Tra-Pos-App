@@ -8,6 +8,7 @@ import { quoteOrder, ValidationError } from './pricing.js';
 import { CatalogStore, ServiceError } from './catalog-store.js';
 import { createStaffAuth, StaffAuthError } from './staff-auth.js';
 import { createAuthTransport, createLoginRateLimiter } from './auth-transport.js';
+import { OrderDraftStore } from './order-drafts.js';
 
 const files = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -44,7 +45,7 @@ function bearer(req) {
   if (!match) throw new StaffAuthError(401, 'UNAUTHENTICATED', '請先登入');
   return match[1];
 }
-export function createServer({ pool = null, staffAuth = createStaffAuth(pool), authTransport = createAuthTransport(), loginRateLimiter = createLoginRateLimiter() } = {}) {
+export function createServer({ pool = null, staffAuth = createStaffAuth(pool), authTransport = createAuthTransport(), loginRateLimiter = createLoginRateLimiter(), orderDrafts = new OrderDraftStore(pool), enableOrderDrafts = process.env.ENABLE_EXPERIMENTAL_ORDER_DRAFTS === 'true' } = {}) {
   const store = new CatalogStore(pool);
   return http.createServer(async (req, res) => {
     const requestId = randomUUID();
@@ -57,7 +58,8 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
         return res.end(content);
       }
       if (req.method === 'GET' && path === '/api/v1/auth/config') return send(res, 200, { request_id: requestId, data: { allowInsecureHttp: authTransport.allowsInsecureHttp(req) } }, requestId);
-      const authPath = path === '/api/v1/sessions' || path === '/api/v1/sessions/current' || path === '/api/v1/me' || path === '/api/v1/admin' || path.startsWith('/api/v1/admin/');
+      const orderPath = path === '/api/v1/order-drafts' || path.startsWith('/api/v1/order-drafts/');
+      const authPath = orderPath || path === '/api/v1/sessions' || path === '/api/v1/sessions/current' || path === '/api/v1/me' || path === '/api/v1/admin' || path.startsWith('/api/v1/admin/');
       if (authPath) authTransport.requireProtectedTransport(req);
       if (req.method === 'POST' && path === '/api/v1/sessions') {
         loginRateLimiter.check(authTransport.sourceIP(req));
@@ -72,6 +74,16 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
       if (path === '/api/v1/admin' || path.startsWith('/api/v1/admin/')) {
         const user = await staffAuth.authenticate(bearer(req));
         if (!user.canManageCatalog) throw new ServiceError(403, 'FORBIDDEN', '沒有商品管理權限');
+      }
+      if (orderPath) {
+        if (!enableOrderDrafts) throw new ServiceError(404, 'NOT_FOUND', '找不到資源');
+        const user = await staffAuth.authenticate(bearer(req));
+        if (req.method === 'POST' && path === '/api/v1/order-drafts') {
+          const input = await body(req); exactFields(input, ['operationId', 'menuRelease', 'items']);
+          return send(res, 200, { request_id: requestId, data: await orderDrafts.create({ staffId: user.id, ...input }) }, requestId);
+        }
+        const match = /^\/api\/v1\/order-drafts\/([^/]+)$/.exec(path);
+        if (req.method === 'GET' && match) return send(res, 200, { request_id: requestId, data: await orderDrafts.get({ staffId: user.id, id: match[1] }) }, requestId);
       }
       if (req.method === 'GET' && path === '/api/v1/catalog/example') return send(res, 200, { request_id: requestId, data: catalog }, requestId);
       if (req.method === 'GET' && path === '/api/v1/catalog/published') return send(res, 200, { request_id: requestId, data: await store.getPublished() }, requestId);

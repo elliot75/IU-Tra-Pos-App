@@ -48,7 +48,7 @@ export function validateCatalog(catalog, { publishing = false } = {}) {
     if (Object.hasOwn(product, 'optionGroups')) {
       list(product.optionGroups, 50, '選項群組');
       for (const group of product.optionGroups) {
-        fields(group, ['id', 'nameZh', 'nameVi', 'minSelect', 'maxSelect', 'values'], '選項群組');
+        fields(group, ['id', 'nameZh', 'nameVi', 'minSelect', 'maxSelect', 'values', ...(Object.hasOwn(group ?? {}, 'defaultValueIds') ? ['defaultValueIds'] : [])], '選項群組');
         id(group.id); unique(groups, group.id);
         text(group.nameZh, '群組中文名稱'); text(group.nameVi, '群組越文名稱');
         list(group.values, 50, '選項');
@@ -58,6 +58,14 @@ export function validateCatalog(catalog, { publishing = false } = {}) {
           fields(value, ['id', 'nameZh', 'nameVi'], '選項');
           id(value.id); unique(values, value.id);
           text(value.nameZh, '選項中文名稱'); text(value.nameVi, '選項越文名稱');
+        }
+        if (Object.hasOwn(group, 'defaultValueIds')) {
+          list(group.defaultValueIds, group.maxSelect, '預設選項');
+          const defaults = new Set();
+          for (const valueId of group.defaultValueIds) {
+            id(valueId); unique(defaults, valueId);
+            if (!values.has(valueId)) fail('預設選項不屬於此群組');
+          }
         }
       }
     }

@@ -45,10 +45,10 @@ function render() {
     const variants = p.variants.map((v, j) => `<div class="detail-row">${field('容量或規格', v.label, `v.${i}.${j}.label`)}${field('完整售價（VND）', v.price, `v.${i}.${j}.price`)}<button class="danger" type="button" data-action="remove-variant" data-i="${i}" data-j="${j}">移除</button></div>`).join('');
     const toppings = p.toppings.map((t, j) => `<div class="detail-row topping-fields">${field('中文名稱', t.nameZh, `t.${i}.${j}.nameZh`)}${field('越文名稱', t.nameVi, `t.${i}.${j}.nameVi`)}${field('單位', t.unit, `t.${i}.${j}.unit`)}${field('售價（VND）', t.price, `t.${i}.${j}.price`)}${field('上限', t.maxPortions, `t.${i}.${j}.maxPortions`, 'number')}<button class="danger" type="button" data-action="remove-topping" data-i="${i}" data-j="${j}">移除</button></div>`).join('');
     const groups = (p.optionGroups || []).map((g, j) => {
-      const values = g.values.map((v, k) => `<div class="detail-row option-value">${field('選項中文', v.nameZh, `o.${i}.${j}.${k}.nameZh`)}${field('選項越文', v.nameVi, `o.${i}.${j}.${k}.nameVi`)}<button class="danger" type="button" data-action="remove-option" data-i="${i}" data-j="${j}" data-k="${k}">移除</button></div>`).join('');
+      const values = g.values.map((v, k) => `<div class="detail-row option-value">${field('選項中文', v.nameZh, `o.${i}.${j}.${k}.nameZh`)}${field('選項越文', v.nameVi, `o.${i}.${j}.${k}.nameVi`)}<label class="default-option"><input type="checkbox" data-default="${i}.${j}.${k}" ${(g.defaultValueIds || []).includes(v.id) ? 'checked' : ''}> 預設選項</label><button class="danger" type="button" data-action="remove-option" data-i="${i}" data-j="${j}" data-k="${k}">移除</button></div>`).join('');
       return `<div class="option-editor"><div class="subheading"><strong>選項群組</strong><button class="danger" type="button" data-action="remove-group" data-i="${i}" data-j="${j}">移除群組</button></div><div class="group-fields">${field('群組中文（例如甜度）', g.nameZh, `g.${i}.${j}.nameZh`)}${field('群組越文', g.nameVi, `g.${i}.${j}.nameVi`)}${field('最少選擇數', g.minSelect, `g.${i}.${j}.minSelect`, 'number')}${field('最多選擇數', g.maxSelect, `g.${i}.${j}.maxSelect`, 'number')}</div>${values}<button class="secondary" type="button" data-action="add-option" data-i="${i}" data-j="${j}">新增選項</button></div>`;
     }).join('');
-    return `<article class="product-card"><div class="card-heading"><h3>${html(p.nameZh || '新商品')}</h3><button class="danger" type="button" data-action="remove-product" data-i="${i}">移除商品</button></div><div class="fields">${field('中文名稱', p.nameZh, `p.${i}.nameZh`)}${field('越文名稱', p.nameVi, `p.${i}.nameVi`)}<label>分類<select data-bind="p.${i}.categoryId">${options}</select></label></div><div class="subheading"><h4>容量與售價</h4><button class="secondary" type="button" data-action="add-variant" data-i="${i}">新增容量</button></div>${variants || '<p class="empty-hint">至少需要一個容量。</p>'}<div class="subheading"><h4>可選配料</h4><button class="secondary" type="button" data-action="add-topping" data-i="${i}">新增配料</button></div>${toppings || '<p class="empty-hint">此商品未設定配料。</p>'}<div class="subheading"><h4>甜度、冰量等選項</h4><button class="secondary" type="button" data-action="add-group" data-i="${i}">新增選項群組</button></div><p class="empty-hint">必選一項請將最少與最多選擇數都設為 1；選項目前不加價。</p>${groups}</article>`;
+    return `<article class="product-card"><div class="card-heading"><h3>${html(p.nameZh || '新商品')}</h3><button class="danger" type="button" data-action="remove-product" data-i="${i}">移除商品</button></div><div class="fields">${field('中文名稱', p.nameZh, `p.${i}.nameZh`)}${field('越文名稱', p.nameVi, `p.${i}.nameVi`)}<label>分類<select data-bind="p.${i}.categoryId">${options}</select></label></div><div class="subheading"><h4>容量與售價</h4><button class="secondary" type="button" data-action="add-variant" data-i="${i}">新增容量</button></div>${variants || '<p class="empty-hint">至少需要一個容量。</p>'}<div class="subheading"><h4>可選配料</h4><button class="secondary" type="button" data-action="add-topping" data-i="${i}">新增配料</button></div>${toppings || '<p class="empty-hint">此商品未設定配料。</p>'}<div class="subheading"><h4>甜度、冰量等選項</h4><button class="secondary" type="button" data-action="add-group" data-i="${i}">新增選項群組</button></div><p class="empty-hint">必選一項請將最少與最多選擇數都設為 1；預設選項不可超過最多選擇數，不足最少選擇數時點餐需補選。選項目前不加價。</p>${groups}</article>`;
   }).join('') : '<p class="empty-hint">尚無商品。</p>';
   $('#editor').hidden = false;
   dirty(state.dirty);
@@ -105,6 +105,15 @@ $('#logout').addEventListener('click', async () => {
 });
 $('#editor').addEventListener('input', event => {
   if (state.busy || !state.token) return;
+  if (event.target.dataset.default !== undefined) {
+    const [i, j, k] = event.target.dataset.default.split('.').map(Number);
+    const group = state.catalog.products[i].optionGroups[j];
+    const valueId = group.values[k].id;
+    group.defaultValueIds = (group.defaultValueIds || []).filter(value => value !== valueId);
+    if (event.target.checked) group.defaultValueIds.push(valueId);
+    dirty();
+    return;
+  }
   const path = event.target.dataset.bind?.split('.'); if (!path) return;
   let object;
   if (path[0] === 'c') object = state.catalog.categories[Number(path[1])];
@@ -133,7 +142,12 @@ $('#editor').addEventListener('click', event => {
     case 'add-group': (products[i].optionGroups ||= []).push({ id: id(), nameZh: '', nameVi: '', minSelect: 1, maxSelect: 1, values: [{ id: id(), nameZh: '', nameVi: '' }] }); break;
     case 'remove-group': products[i].optionGroups.splice(j, 1); break;
     case 'add-option': products[i].optionGroups[j].values.push({ id: id(), nameZh: '', nameVi: '' }); break;
-    case 'remove-option': products[i].optionGroups[j].values.splice(k, 1); break;
+    case 'remove-option': {
+      const group = products[i].optionGroups[j];
+      const [removed] = group.values.splice(k, 1);
+      if (group.defaultValueIds) group.defaultValueIds = group.defaultValueIds.filter(value => value !== removed.id);
+      break;
+    }
     default: return;
   }
   state.dirty = true; message(''); render();

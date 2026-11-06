@@ -31,6 +31,26 @@ async function signIn(env) {
   env.pending.shift()(response(draft())); await task;
 }
 
+test('後台設定、取消及移除預設選項，並將設定送出儲存', async () => {
+  const env = setup(); await signIn(env);
+  const group = { id: 'ice', nameZh: '冰量', nameVi: 'Đá', minSelect: 1, maxSelect: 1, values: [
+    { id: 'less', nameZh: '少冰', nameVi: 'Ít đá' }, { id: 'normal', nameZh: '正常冰', nameVi: 'Đá' }
+  ] };
+  env.state.catalog.products.push({ id: 'p', categoryId: 'tea', nameZh: '茶', nameVi: 'Tra', variants: [], toppings: [], optionGroups: [group] });
+  const input = (k, checked) => env.get('#editor').listeners.input({ target: { dataset: { default: `0.0.${k}` }, checked } });
+  input(0, true); input(1, true); input(0, false);
+  assert.deepEqual(Array.from(group.defaultValueIds), ['normal']);
+  assert.equal(env.state.dirty, true);
+  const save = env.click('#save');
+  const sent = JSON.parse(env.calls.at(-1).body);
+  assert.deepEqual(sent.catalog.products[0].optionGroups[0].defaultValueIds, ['normal']);
+  env.pending.shift()(response({ revision: '8', catalog: env.state.catalog })); await save;
+  assert.match(env.get('#product-list').innerHTML, /data-default="0\.0\.1" checked/);
+  env.get('#editor').listeners.click({ target: { closest: () => ({ dataset: { action: 'remove-option', i: '0', j: '0', k: '1' } }) } });
+  assert.deepEqual(Array.from(group.defaultValueIds), []);
+  assert.equal(group.values.length, 1);
+});
+
 test('區網 HTTP 經伺服器允許後可登入，未啟用時不傳送密碼', async () => {
   for (const allowed of [false, true]) {
     const env = setup(false); const task = env.login();
