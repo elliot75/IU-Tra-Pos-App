@@ -51,4 +51,4 @@ footer { padding: 18px 6vw; color: #66776a; font-size: 14px; }
   .order-summary { padding: 20px; }
 }
 @media (max-width: 480px) { .touch-products { grid-template-columns: repeat(2, minmax(0, 1fr)); }.touch-product { padding: 14px; }.touch-product strong { font-size: 17px; } #touch-form { padding: 20px; } }
-.touch-product-art { position: relative; display: grid; place-items: center; align-self: stretch; height: 110px; overflow: hidden; border-radius: 8px; background: #e3eee2; color: #53745c; }.touch-product-fallback { font-weight: 800; letter-spacing: .1em; }.touch-product-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.touch-product-art { position: relative; display: grid; place-items: center; align-self: stretch; height: 110px; overflow: hidden; border-radius: 8px; background: #e3eee2; color: #53745c; }.touch-product-fallback { font-weight: 800; letter-spacing: .1em; }.touch-product-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #e3eee2; }
