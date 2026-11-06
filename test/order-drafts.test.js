@@ -9,12 +9,15 @@ test('server quote preserves original topping unit and price, scoped to owner', 
   const db = fakeDb(); const store = new OrderDraftStore(db); const request = input();
   db.catalog.products[0].toppings[0].unit = '顆';
   request.items[0].price = '1'; request.items[0].toppings[0].price = '0'; request.items[0].toppings[0].unit = '偽造';
+  request.items[0].customerNote = '少冰'; request.items[0].internalNote = '店員提醒';
   const created = await store.create(request);
   assert.equal(created.status, 'development_draft');
   assert.equal(created.quote.currency, 'VND');
   assert.equal(created.quote.items[0].unitPrice, '27000');
   assert.equal(created.quote.total, '54000');
   assert.equal(created.quote.items[0].toppings[0].unit, '顆');
+  assert.equal(created.quote.items[0].customerNote, '少冰');
+  assert.equal(created.quote.items[0].internalNote, '店員提醒');
   db.catalog.products[0].variants[0].price = '1';
   db.catalog.products[0].toppings[0].unit = '球';
   assert.deepEqual(await store.get({ staffId: staff, id: created.id }), created);

@@ -4,21 +4,26 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import * as protocol from '../public/display-protocol.js';
+import { catalog } from '../src/catalog.js';
+import * as validation from '../public/validation.js';
+import * as catalogValidation from '../public/catalog-validation.js';
+import { quoteOrder } from '../src/pricing.js';
 
 const root = new URL('../public/', import.meta.url);
 const { DISPLAY_CHANNEL, DISPLAY_TIMEOUT, DISPLAY_HEARTBEAT, displayPairFromHash, isDisplayId } = protocol;
 
-// Bridge the single named ESM import to its real, natively imported namespace.
-// This keeps vm DOM isolation without requiring --experimental-vm-modules or copying protocol code.
+// Bridge browser ESM imports to the real shared modules, keeping DOM isolation.
 async function load(env, file, expose = '') {
   const source = await readFile(new URL(file, root), 'utf8');
-  let imports = 0;
-  const script = source.replace(/^import \{ ([\w, ]+) \} from '\.\/display-protocol\.js';$/gm, (_, names) => {
-    imports++;
-    for (const name of names.split(',').map(name => name.trim())) assert.ok(name in protocol);
-    return `const { ${names} } = globalThis.displayProtocol;`;
+  const modules = { 'display-protocol': protocol, validation, 'catalog-validation': catalogValidation };
+  env.context.modules = modules;
+  const imported = [];
+  const script = source.replace(/^import \{ ([\w, ]+) \} from '\.\/([\w-]+)\.js';$/gm, (_, names, module) => {
+    imported.push(module);
+    for (const name of names.split(',').map(name => name.trim())) assert.ok(name in modules[module]);
+    return `const { ${names} } = globalThis.modules['${module}'];`;
   });
-  assert.equal(imports, 1, 'each page imports the shared protocol');
+  assert.ok(imported.includes('display-protocol'), 'each page imports the shared protocol');
   await vm.runInContext(`(async () => { ${script}\n${expose} })()`, env.context);
 }
 
@@ -51,7 +56,8 @@ function setup({ hash = '', transport } = {}) {
     return {
       get textContent() { return text; }, set textContent(value) { text = value; mutations++; },
       get hidden() { return hidden; }, set hidden(value) { hidden = value; mutations++; },
-      innerHTML: '', dataset: {}, children: [], listeners: {}, classList: { toggle() {} },
+      innerHTML: '', value: '', open: false, dataset: {}, children: [], listeners: {}, classList: { toggle() {} },
+      showModal() { this.open = true; }, close() { this.open = false; },
       addEventListener(type, fn) { this.listeners[type] = fn; },
       replaceChildren(...children) { this.children = children; mutations++; },
       append(...children) { this.children.push(...children); mutations++; },
@@ -60,6 +66,7 @@ function setup({ hash = '', transport } = {}) {
   }
   function get(id) { if (!elements.has(id)) elements.set(id, node()); return elements.get(id); }
   let now = 10000; const timers = []; const channels = []; const listeners = {};
+  const deadlines = new Map(); let timerId = 0;
   class Channel {
     constructor(name) { this.name = name; this.sent = []; this.active = true; channels.push(this); transport?.connect(this); }
     postMessage(message) { this.sent.push(structuredClone(message)); transport?.send(this, message); }
@@ -69,15 +76,20 @@ function setup({ hash = '', transport } = {}) {
   const context = vm.createContext({
     document, location: { hash }, BroadcastChannel: Channel, displayProtocol: protocol,
     Date: { now: () => now }, setInterval: (fn, delay) => { assert.equal(delay, DISPLAY_HEARTBEAT); timers.push(fn); },
+    setTimeout(fn, delay) { const id = ++timerId; deadlines.set(id, { fn, at: now + delay }); return id; },
+    clearTimeout(id) { deadlines.delete(id); }, AbortController, URL,
     Intl, BigInt, console,
     fetch: async () => ({ ok: false, status: 404, json: async () => ({ error: {} }) })
   });
-  return { context, get, timers, channels, listeners, mutations: () => mutations, advance(ms) { now += ms; } };
+  return { context, get, timers, channels, listeners, mutations: () => mutations, advance(ms) {
+    now += ms;
+    for (const [id, deadline] of deadlines) if (deadline.at <= now) { deadlines.delete(id); deadline.fn(); }
+  } };
 }
 
 async function main(transport) {
   const env = setup({ transport });
-  await load(env, 'app.js', 'globalThis.testing = { state, renderOrder };');
+  await load(env, 'app.js', 'globalThis.testing = { state, renderOrder, operationCount: () => customerOperations.size };');
   env.pair = displayPairFromHash(new URL(env.get('#open-display').href, 'http://localhost').hash);
   assert.ok(isDisplayId(env.pair));
   return env;
@@ -95,7 +107,7 @@ function orderFor(env, extra = {}) {
 const quote = total => ({ items: [{ nameZh: '茶', variant: '500 ml', quantity: 1,
   options: [{ nameZh: '甜度', values: [{ nameZh: '半糖', secret: 'TOKEN-SECRET' }], secret: 'TOKEN-SECRET' }],
   toppings: [{ nameZh: '珍珠', portions: 1, secret: 'TOKEN-SECRET' }],
-  lineTotal: total, unitPrice: total, secret: 'TOKEN-SECRET' }], subtotal: total, total, secret: 'TOKEN-SECRET' });
+  lineTotal: total, unitPrice: total, customerNote: '少冰', internalNote: 'TOKEN-SECRET', secret: 'TOKEN-SECRET' }], subtotal: total, total, secret: 'TOKEN-SECRET' });
 
 async function setOrder(env, total) {
   const { state, renderOrder } = env.context.testing;
@@ -183,6 +195,10 @@ test('逾時與可見性重連保留指定 pair，拒絕舊 nonce 並重建已�
   channel.onmessage({ data: { ...order, nonce: request.nonce } });
   assert.equal(env.get('amount').hidden, false);
   env.listeners.visibilitychange();
+  assert.equal(env.get('amount').hidden, false);
+  assert.equal(channel.sent.at(-1).nonce, request.nonce);
+  env.advance(DISPLAY_TIMEOUT);
+  env.listeners.visibilitychange();
   assert.equal(env.get('amount').hidden, true);
   const visibleRequest = channel.sent.at(-1);
   assert.equal(visibleRequest.pair, order.pair); assert.notEqual(visibleRequest.nonce, request.nonce);
@@ -232,6 +248,57 @@ test('主畫面 refresh 產生新 pair，舊客顯不可自動綁至新主畫面
   assert.equal(customer.get('amount').hidden, true);
 });
 
+test('客顯模式、同鍵重試及過期畫面不會重複加入商品', async () => {
+  const env = await main(), channel = env.channels[0], nonce = randomUUID(), pair = env.pair;
+  env.context.testing.state.catalog = structuredClone(catalog);
+  channel.onmessage({ data: { type: 'request', pair, nonce } });
+  const item = { productId: 'oolong', variantId: 'oolong-500', quantity: 1, toppings: [], options: [], customerNote: '少冰', internalNote: '不應採用', price: '1' };
+  const action = { type: 'add-item', pair, nonce, session: pair, revision: channel.sent.at(-1).revision, operationId: randomUUID(), item };
+  channel.onmessage({ data: action });
+  assert.equal(channel.sent.at(-1).ok, false);
+  assert.equal(env.context.testing.state.items.length, 0);
+  env.get('#display-mode').listeners.change({ target: { value: 'touch' } });
+  const snapshot = channel.sent.at(-1);
+  assert.equal(snapshot.mode, 'touch'); assert.equal(snapshot.catalog.release, catalog.release);
+  assert.equal(JSON.stringify(snapshot.catalog).includes('不應採用'), false);
+  const calls = [];
+  env.context.fetch = async (url, options) => { calls.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ data: quote('22000') }) }; };
+  const accepted = { ...action, operationId: randomUUID(), revision: snapshot.revision };
+  channel.onmessage({ data: accepted });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(env.context.testing.state.items.length, 1);
+  assert.equal(env.context.testing.state.items[0].internalNote, '');
+  assert.equal(env.context.testing.state.items[0].price, undefined);
+  assert.equal(calls[0].items[0].customerNote, '少冰');
+  assert.equal(calls.length, 1, 'reuse the verified quote instead of requesting it twice');
+  assert.equal(env.get('#total').textContent, '22.000 ₫');
+  assert.ok(channel.sent.some(m => m.type === 'add-result' && m.operationId === accepted.operationId && m.ok));
+  channel.onmessage({ data: accepted });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(env.context.testing.state.items.length, 1);
+  channel.onmessage({ data: { ...accepted, operationId: randomUUID() } });
+  assert.equal(channel.sent.at(-1).ok, false);
+  assert.equal(env.context.testing.state.items.length, 1);
+});
+
+test('顧客送出後店員切換模式，延遲試算不可加入訂單', async () => {
+  const env = await main(), channel = env.channels[0], pair = env.pair, nonce = randomUUID();
+  env.context.testing.state.catalog = structuredClone(catalog);
+  channel.onmessage({ data: { type: 'request', pair, nonce } });
+  env.get('#display-mode').listeners.change({ target: { value: 'touch' } });
+  const revision = channel.sent.at(-1).revision;
+  let finishFetch; let calls = 0;
+  env.context.fetch = () => { calls++; return new Promise(resolve => { finishFetch = resolve; }); };
+  const message = { type: 'add-item', pair, nonce, session: pair, revision, operationId: randomUUID(), item: { productId: 'oolong', variantId: 'oolong-500', quantity: 1, toppings: [], options: [], customerNote: '' } };
+  channel.onmessage({ data: message }); channel.onmessage({ data: message });
+  assert.equal(calls, 1);
+  env.get('#display-mode').listeners.change({ target: { value: 'view' } });
+  finishFetch({ ok: true, json: async () => ({ data: quote('22000') }) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(env.context.testing.state.items.length, 0);
+  assert.equal(channel.sent.at(-1).ok, false);
+});
+
 test('主畫面只接受對應 pair 請求與有效 ACK，廣播嚴格報價白名單', async () => {
   const env = await main(); const pending = []; const { pair } = env;
   const { state, renderOrder } = env.context.testing; const channel = env.channels[0];
@@ -259,12 +326,137 @@ test('主畫面只接受對應 pair 請求與有效 ACK，廣播嚴格報價白�
   assert.equal(channel.sent.at(-1).phase, 'calculating');
   pending[1]({ ok: true, json: async () => ({ data: quote('200') }) }); await second;
   assert.deepEqual(channel.sent.at(-1), {
-    type: 'snapshot', pair, nonce, session: pair, revision: 4, phase: 'order',
-    items: [{ name: '茶', variant: '500 ml', quantity: 1, options: [{ name: '甜度', values: ['半糖'] }], toppings: [{ name: '珍珠', portions: 1 }] }], total: '200'
+    type: 'snapshot', pair, nonce, session: pair, revision: 4, mode: 'view', phase: 'order',
+    items: [{ name: '茶', variant: '500 ml', quantity: 1, customerNote: '少冰', options: [{ name: '甜度', values: ['半糖'] }], toppings: [{ name: '珍珠', portions: 1 }] }], total: '200'
   });
   assert.equal(JSON.stringify(channel.sent).includes('TOKEN-SECRET'), false);
   const third = renderOrder();
   assert.equal(channel.sent.at(-1).phase, 'calculating'); assert.equal('total' in channel.sent.at(-1), false);
   assert.equal(env.get('#total').textContent, '—');
   pending[2]({ ok: true, json: async () => ({ data: quote('300') }) }); await third;
+});
+
+const tick = () => new Promise(resolve => setImmediate(resolve));
+async function touchMain() {
+  const env = await main();
+  env.context.testing.state.catalog = structuredClone(catalog);
+  env.nonce = randomUUID(); env.channel = env.channels[0];
+  env.channel.onmessage({ data: { type: 'request', pair: env.pair, nonce: env.nonce } });
+  env.get('#display-mode').listeners.change({ target: { value: 'touch' } });
+  return env;
+}
+function customerAction(env, extra = {}) {
+  return { type: 'add-item', pair: env.pair, nonce: env.nonce, session: env.pair,
+    revision: env.channel.sent.findLast(m => m.type === 'snapshot').revision,
+    operationId: randomUUID(), item: { productId: 'oolong', variantId: 'oolong-500', quantity: 1, toppings: [], options: [], customerNote: '' }, ...extra };
+}
+function realQuotes(env) {
+  env.context.fetch = async (_, options) => ({ ok: true, json: async () => ({ data: quoteOrder(JSON.parse(options.body), catalog) }) });
+}
+
+test('試算 headers 或 body 掛起都會逾時解鎖，忽略取消的晚到結果也不能加單', async () => {
+  for (const stage of ['headers', 'body']) {
+    const env = await touchMain(); let finish; let signal;
+    env.context.fetch = (_, options) => {
+      signal = options.signal;
+      if (stage === 'headers') return new Promise(resolve => { finish = resolve; });
+      return Promise.resolve({ ok: true, json: () => new Promise(resolve => { finish = resolve; }) });
+    };
+    const old = customerAction(env);
+    env.channel.onmessage({ data: old }); await tick();
+    env.advance(10000); await tick();
+    assert.equal(signal.aborted, true);
+    assert.equal(env.context.testing.state.items.length, 0);
+    assert.match(env.channel.sent.at(-1).message, /逾時/);
+    // Refresh the existing connection, without reloading the main order.
+    env.channel.onmessage({ data: { type: 'request', pair: env.pair, nonce: env.nonce } });
+    realQuotes(env);
+    env.channel.onmessage({ data: customerAction(env) }); await tick();
+    assert.equal(env.context.testing.state.items.length, 1, 'timeout releases the global pending lock');
+    if (stage === 'headers') finish({ ok: true, json: async () => ({ data: quote('22000') }) });
+    else finish({ data: quote('22000') });
+    await tick();
+    assert.equal(env.context.testing.state.items.length, 1, 'late quote cannot add the timed-out item');
+  }
+});
+
+test('超過 1000 次操作可繼續點餐，已回收的成功操作重播仍被舊 revision 拒絕', async () => {
+  const env = await touchMain(); realQuotes(env);
+  const accepted = customerAction(env);
+  env.channel.onmessage({ data: accepted }); await tick();
+  assert.equal(env.context.testing.state.items.length, 1);
+  env.context.fetch = async () => ({ ok: false, json: async () => ({ error: { message: '選項不正確' } }) });
+  for (let i = 0; i < 1005; i++) {
+    env.channel.onmessage({ data: customerAction(env) }); await tick();
+  }
+  assert.ok(env.context.testing.operationCount() <= 1000);
+  let calls = 0;
+  env.context.fetch = async (_, options) => { calls++; return { ok: true, json: async () => ({ data: quoteOrder(JSON.parse(options.body), catalog) }) }; };
+  env.channel.onmessage({ data: accepted }); await tick();
+  assert.equal(calls, 0); assert.equal(env.context.testing.state.items.length, 1);
+  env.channel.onmessage({ data: customerAction(env) }); await tick();
+  assert.equal(calls, 1); assert.equal(env.context.testing.state.items.length, 2);
+});
+
+test('顧客加入前也檢查完整訂單的 UTF-8 大小，不改動原訂單', async () => {
+  const env = await touchMain();
+  const item = { ...customerAction(env).item, customerNote: '茶'.repeat(200), internalNote: '茶'.repeat(200) };
+  env.context.testing.state.items = Array.from({ length: 60 }, () => structuredClone(item));
+  let calls = 0; env.context.fetch = () => { calls++; throw new Error('must not fetch'); };
+  env.channel.onmessage({ data: customerAction(env) }); await tick();
+  assert.equal(calls, 0); assert.equal(env.context.testing.state.items.length, 60);
+  assert.match(env.channel.sent.at(-1).message, /大小上限/);
+});
+
+test('多客顯只在首次連線傳菜單，request 不向其他客顯廣播，心跳不重繪觸控 DOM', async () => {
+  const transport = bus(); const host = await main(transport);
+  host.context.testing.state.catalog = structuredClone(catalog);
+  host.get('#display-mode').listeners.change({ target: { value: 'touch' } });
+  const first = await display(host.pair, transport); transport.flush();
+  const second = await display(host.pair, transport); transport.flush();
+  assert.equal(first.get('touch-menu').hidden, false);
+  const connection = first.channels[0].sent.find(m => m.type === 'request');
+  const channel = host.channels[0], before = channel.sent.length;
+  const mutations = first.mutations();
+  first.timers[0](); transport.flush();
+  const replies = channel.sent.slice(before);
+  assert.equal(replies.length, 1); assert.equal(replies[0].nonce, connection.nonce);
+  assert.equal(replies[0].type, 'heartbeat'); assert.equal('catalog' in replies[0], false);
+  assert.equal(first.mutations(), mutations);
+  host.timers[0](); transport.flush();
+  assert.ok(channel.sent.slice(before).every(m => !('catalog' in m)));
+  realQuotes(host);
+  host.context.testing.state.items = [customerAction({ pair: host.pair, nonce: connection.nonce, channel }).item];
+  await host.context.testing.renderOrder(); transport.flush();
+  assert.equal(first.get('total').textContent, '22.000 ₫');
+  assert.equal(second.get('total').textContent, '22.000 ₫');
+  assert.ok(channel.sent.slice(before).every(m => !('catalog' in m)), 'order revisions reuse the acknowledged menu');
+  // A fresh nonce after disconnect must receive the full menu again.
+  first.advance(DISPLAY_TIMEOUT); first.timers[0](); transport.flush();
+  assert.equal(first.get('touch-menu').hidden, false);
+  assert.ok(channel.sent.slice(before).some(m => m.catalog));
+  host.context.testing.state.catalog = { ...structuredClone(catalog), release: 'release-new' };
+  host.context.testing.state.catalog.products[0].nameZh = '新菜單茶';
+  host.context.testing.state.items = [];
+  await host.context.testing.renderOrder(); transport.flush();
+  assert.equal(first.get('touch-products').children[0].children[1].textContent, '新菜單茶');
+});
+
+test('觸控客顯與伺服器共用菜單限制，拒絕無效完整菜單與未快取的版本', async () => {
+  const env = await display(randomUUID()); const channel = env.channels[0];
+  const menu = structuredClone(catalog);
+  const snapshot = orderFor(env, { phase: 'standby', mode: 'touch', catalog: menu, catalogRelease: menu.release });
+  const invalid = structuredClone(menu); invalid.products[0].nameZh = 'a'.repeat(101);
+  channel.onmessage({ data: { ...snapshot, catalog: invalid } });
+  assert.equal(channel.sent.length, 1);
+  const duplicate = structuredClone(menu); duplicate.products[0].variants.push({ ...duplicate.products[0].variants[0] });
+  channel.onmessage({ data: { ...snapshot, catalog: duplicate } });
+  assert.equal(channel.sent.length, 1);
+  channel.onmessage({ data: snapshot });
+  assert.equal(env.get('touch-menu').hidden, false);
+  const ackCount = channel.sent.length;
+  channel.onmessage({ data: { ...snapshot, revision: 3, catalog: undefined, catalogRelease: 'unknown-release' } });
+  assert.equal(channel.sent.length, ackCount);
+  channel.onmessage({ data: { ...snapshot, revision: 3, catalog: undefined } });
+  assert.equal(channel.sent.at(-1).revision, 3);
 });

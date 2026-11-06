@@ -41,10 +41,12 @@ test('安全模式在驗證前拒絕 HTTP，可信代理須提供 https，客顯
     const login = { method: 'POST', data: { loginName: 'manager', password: 'valid-password' } };
     assert.equal((await request(base, '/api/v1/sessions', login)).status, 403);
     assert.equal((await request(base, '/api/v1/sessions', { ...login, headers: { 'x-forwarded-proto': 'https' } })).status, 200);
-    const module = await fetch(base + '/display-protocol.js');
-    assert.equal(module.status, 200);
-    assert.match(module.headers.get('content-type'), /javascript/);
-    assert.match(await module.text(), /export const DISPLAY_CHANNEL/);
+    for (const [path, exported] of [['/display-protocol.js', 'export const DISPLAY_CHANNEL'], ['/validation.js', 'export function normalizeNote'], ['/catalog-validation.js', 'export function validateCatalog']]) {
+      const module = await fetch(base + path);
+      assert.equal(module.status, 200);
+      assert.match(module.headers.get('content-type'), /javascript/);
+      assert.ok((await module.text()).includes(exported));
+    }
   }, { authTransport });
   await withServer(async base => {
     assert.equal((await request(base, '/api/v1/me', { headers: { 'x-forwarded-proto': 'https' } })).status, 403);

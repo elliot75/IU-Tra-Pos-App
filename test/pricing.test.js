@@ -47,6 +47,17 @@ test('糖度與冰量各自最多選一項，伺服器拒絕繞過介面複選',
   assert.throws(() => quoteOptions([sugar, { ...ice, valueIds: ['less', 'normal'] }]));
 });
 
+test('備註按明細保存並驗證，舊明細仍可試算', () => {
+  const result = quote([{ ...item(), customerNote: ' 少冰 ', internalNote: '製作提醒' }, item('oolong-500')]);
+  assert.equal(result.items[0].customerNote, '少冰');
+  assert.equal(result.items[0].internalNote, '製作提醒');
+  assert.equal(result.items[1].customerNote, '');
+  for (const note of [null, 1, 'a'.repeat(201), 'bad\nline', 'bad\u0000']) {
+    assert.throws(() => quote([{ ...item(), customerNote: note }]));
+    assert.throws(() => quote([{ ...item(), internalNote: note }]));
+  }
+});
+
 test('規格驗收範例：兩杯共 51,000 VND', () => {
   const result = quote([item('oolong-700', [{ id: 'example-topping', portions: 1 }]), item('oolong-500')]);
   assert.equal(result.items[0].lineTotal, '29000');

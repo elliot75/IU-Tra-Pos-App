@@ -9,6 +9,7 @@ import { CatalogStore, ServiceError } from './catalog-store.js';
 import { createStaffAuth, StaffAuthError } from './staff-auth.js';
 import { createAuthTransport, createLoginRateLimiter } from './auth-transport.js';
 import { OrderDraftStore } from './order-drafts.js';
+import { MAX_REQUEST_BYTES } from '../public/validation.js';
 
 const files = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -18,6 +19,8 @@ const files = new Map([
   ['/display.html', ['display.html', 'text/html; charset=utf-8']],
   ['/display.js', ['display.js', 'text/javascript; charset=utf-8']],
   ['/display-protocol.js', ['display-protocol.js', 'text/javascript; charset=utf-8']],
+  ['/validation.js', ['validation.js', 'text/javascript; charset=utf-8']],
+  ['/catalog-validation.js', ['catalog-validation.js', 'text/javascript; charset=utf-8']],
   ['/display.css', ['display.css', 'text/css; charset=utf-8']],
   ['/admin', ['admin.html', 'text/html; charset=utf-8']],
   ['/admin.js', ['admin.js', 'text/javascript; charset=utf-8']],
@@ -32,9 +35,9 @@ async function body(req) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size <= 65536) chunks.push(chunk);
+    if (size <= MAX_REQUEST_BYTES) chunks.push(chunk);
   }
-  if (size > 65536) throw new ValidationError('請求內容過大');
+  if (size > MAX_REQUEST_BYTES) throw new ValidationError('請求內容過大');
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new ValidationError('JSON 格式不正確'); }
 }
 function exactFields(value, names) {

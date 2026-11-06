@@ -1,4 +1,5 @@
 import { DISPLAY_CHANNEL, DISPLAY_TIMEOUT, DISPLAY_HEARTBEAT, displayId, isDisplayId } from './display-protocol.js';
+import { normalizeNote, quoteBody } from './validation.js';
 
 const $ = (selector, parent = document) => parent.querySelector(selector);
 const money = value => `${new Intl.NumberFormat('vi-VN').format(BigInt(value))} ₫`;
@@ -15,23 +16,73 @@ const displayRequests = new Map();
 let displayProjection = { phase: 'standby' };
 let displayRevision = 0;
 let displayAckAt = 0;
+let displayMode = 'view';
+const customerOperations = new Map();
+let customerOperationPending = false;
+$('#display-mode').value = displayMode;
+$('#display-mode').addEventListener('change', event => {
+  displayMode = event.target.value === 'touch' ? 'touch' : 'view';
+  displayRevision++; displayAckAt = 0; sendDisplaySnapshot(); updateDisplayStatus();
+});
+let projectedCatalogSource = null, projectedCatalog = null;
+function publicCatalog() {
+  if (!state.catalog) return null;
+  if (projectedCatalogSource === state.catalog) return projectedCatalog;
+  projectedCatalogSource = state.catalog;
+  projectedCatalog = {
+    release: state.catalog.release,
+    categories: state.catalog.categories.map(({ id, nameZh, nameVi }) => ({ id, nameZh, nameVi })),
+    products: state.catalog.products.map(({ id, categoryId, nameZh, nameVi, imageUrl, variants, toppings, optionGroups }) => ({
+      id, categoryId, nameZh, nameVi, ...(imageUrl ? { imageUrl } : {}),
+      variants: variants.map(({ id, label, price }) => ({ id, label, price })),
+      toppings: toppings.map(({ id, nameZh, nameVi, unit, price, maxPortions }) => ({ id, nameZh, nameVi, unit, price, maxPortions })),
+      optionGroups: (optionGroups || []).map(({ id, nameZh, nameVi, minSelect, maxSelect, values, defaultValueIds }) => ({ id, nameZh, nameVi, minSelect, maxSelect, values: values.map(({ id, nameZh, nameVi }) => ({ id, nameZh, nameVi })), ...(defaultValueIds ? { defaultValueIds } : {}) }))
+    }))
+  };
+  return projectedCatalog;
+}
 function updateDisplayStatus() {
   $('#display-status').textContent = !displayChannel ? '此瀏覽器不支援客顯連線' : Date.now() - displayAckAt < DISPLAY_TIMEOUT ? '客顯已連線' : '客顯未連線';
 }
-function sendDisplaySnapshot() {
+function connectedDisplay(nonce) {
+  const connection = displayRequests.get(nonce);
+  return connection && Date.now() - connection.seen < DISPLAY_TIMEOUT;
+}
+function pruneDisplays() {
+  for (const nonce of displayRequests.keys()) if (!connectedDisplay(nonce)) displayRequests.delete(nonce);
+}
+function sendDisplaySnapshot(targetNonce) {
   if (!displayChannel) return;
-  for (const [nonce, seen] of displayRequests) {
-    if (Date.now() - seen >= DISPLAY_TIMEOUT) { displayRequests.delete(nonce); continue; }
-    displayChannel.postMessage({ type: 'snapshot', pair: displaySession, nonce, session: displaySession, revision: displayRevision, ...displayProjection });
+  pruneDisplays();
+  for (const [nonce, connection] of displayRequests) {
+    if (targetNonce && nonce !== targetNonce) continue;
+    const envelope = { pair: displaySession, nonce, session: displaySession, revision: displayRevision };
+    if (connection.revision === displayRevision) {
+      displayChannel.postMessage({ type: 'heartbeat', ...envelope });
+      continue;
+    }
+    const menu = displayMode === 'touch' && state.catalog ? {
+      catalogRelease: state.catalog.release,
+      ...(connection.catalogRelease !== state.catalog.release ? { catalog: publicCatalog() } : {})
+    } : {};
+    displayChannel.postMessage({ type: 'snapshot', ...envelope, mode: displayMode, ...menu, ...displayProjection });
   }
 }
 if (displayChannel) displayChannel.onmessage = ({ data }) => {
   if (!data || typeof data !== 'object' || data.pair !== displaySession || !isDisplayId(data.nonce)) return;
   if (data.type === 'request') {
+    pruneDisplays();
     if (!displayRequests.has(data.nonce) && displayRequests.size >= 20) return;
-    displayRequests.set(data.nonce, Date.now());
-    sendDisplaySnapshot();
-  } else if (data.type === 'ack' && data.session === displaySession && data.revision === displayRevision && displayRequests.has(data.nonce) && Date.now() - displayRequests.get(data.nonce) < DISPLAY_TIMEOUT) {
+    const connection = displayRequests.get(data.nonce) || { revision: -1, catalogRelease: null };
+    connection.seen = Date.now();
+    displayRequests.set(data.nonce, connection);
+    sendDisplaySnapshot(data.nonce);
+  } else if (data.type === 'add-item') {
+    void addCustomerItem(data);
+  } else if (data.type === 'ack' && data.session === displaySession && data.revision === displayRevision && connectedDisplay(data.nonce)) {
+    const connection = displayRequests.get(data.nonce);
+    connection.revision = data.revision;
+    connection.catalogRelease = displayMode === 'touch' && data.catalogRelease === state.catalog?.release ? data.catalogRelease : null;
     displayAckAt = Date.now(); updateDisplayStatus();
   }
 };
@@ -39,17 +90,82 @@ setInterval(() => { sendDisplaySnapshot(); updateDisplayStatus(); }, DISPLAY_HEA
 updateDisplayStatus();
 function projectQuote(quote) {
   return { phase: 'order', items: quote.items.map(item => ({
-    name: item.nameZh, variant: item.variant, quantity: item.quantity,
+    name: item.nameZh, variant: item.variant, quantity: item.quantity, customerNote: item.customerNote || '',
     options: (item.options || []).map(group => ({ name: group.nameZh, values: group.values.map(value => value.nameZh) })),
     toppings: item.toppings.map(topping => ({ name: topping.nameZh, portions: topping.portions }))
   })), total: String(quote.total) };
 }
 
+function customerItem(input) {
+  const ident = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(value);
+  if (!input || typeof input !== 'object' || Array.isArray(input) || !ident(input.productId) || !ident(input.variantId) ||
+      !Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 100 ||
+      !Array.isArray(input.toppings) || input.toppings.length > 50 || !Array.isArray(input.options) || input.options.length > 50 ||
+      typeof input.customerNote !== 'string' || input.customerNote.length > 200 || /[\u0000-\u001f\u007f]/.test(input.customerNote)) throw new Error('商品資料不正確');
+  const toppings = input.toppings.map(t => {
+    if (!t || !ident(t.id) || !Number.isInteger(t.portions) || t.portions < 1 || t.portions > 100) throw new Error('配料資料不正確');
+    return { id: t.id, portions: t.portions };
+  });
+  const options = input.options.map(g => {
+    if (!g || !ident(g.groupId) || !Array.isArray(g.valueIds) || g.valueIds.length > 50 || !g.valueIds.every(ident)) throw new Error('選項資料不正確');
+    return { groupId: g.groupId, valueIds: [...g.valueIds] };
+  });
+  return { productId: input.productId, variantId: input.variantId, quantity: input.quantity, toppings, options, customerNote: normalizeNote(input.customerNote), internalNote: '' };
+}
+async function addCustomerItem(data) {
+  if (data.session !== displaySession || !isDisplayId(data.operationId) || !connectedDisplay(data.nonce)) return;
+  const reply = (ok, message) => displayChannel.postMessage({ type: 'add-result', pair: displaySession, nonce: data.nonce, session: displaySession, operationId: data.operationId, ok, message });
+  let item;
+  try { item = customerItem(data.item); } catch (error) { reply(false, error.message); return; }
+  const fingerprint = JSON.stringify({ revision: data.revision, item });
+  const previous = customerOperations.get(data.operationId);
+  if (previous) {
+    if (previous.fingerprint !== fingerprint) reply(false, '此操作識別已用於其他內容');
+    else if (previous.result) reply(previous.result.ok, previous.result.message);
+    return;
+  }
+  // A successful add advances displayRevision. Evicted requests still carry their
+  // original revision and cannot commit again. Never evict an in-flight operation.
+  for (const [id, operation] of customerOperations) {
+    if (operation.result && (operation.revision !== displayRevision || customerOperations.size >= 1000)) customerOperations.delete(id);
+  }
+  const operation = { fingerprint, revision: data.revision, result: null };
+  customerOperations.set(data.operationId, operation);
+  const finish = (ok, message) => { operation.result = { ok, message }; reply(ok, message); };
+  if (displayMode !== 'touch' || !state.catalog || data.revision !== displayRevision || displayProjection.phase === 'calculating' || displayProjection.phase === 'unavailable') { finish(false, '畫面狀態已變更，請重新確認'); return; }
+  if (customerOperationPending || state.items.length >= 100) { finish(false, '目前無法加入商品，請稍後再試'); return; }
+  customerOperationPending = true;
+  const originalRevision = displayRevision;
+  const originalCatalog = state.catalog;
+  try {
+    const quote = await request('/api/v1/quotes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: quoteBody(originalCatalog.release, [...state.items, item]) });
+    if (displayMode !== 'touch' || displayRevision !== originalRevision || state.catalog !== originalCatalog || !connectedDisplay(data.nonce)) { finish(false, '訂單已變更，請重新確認'); return; }
+    state.items.push(item);
+    state.revision++;
+    showQuote(quote);
+    finish(true, '已加入訂單');
+  } catch (error) { finish(false, error.message || '無法驗證商品，請重試'); }
+  finally { customerOperationPending = false; }
+}
 async function request(url, options) {
-  const response = await fetch(url, options);
-  const result = await response.json();
-  if (!response.ok) { const error = new Error(result.error?.message || '無法完成操作'); error.status = response.status; throw error; }
-  return result.data;
+  const controller = new AbortController();
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('連線逾時，請稍後重試'));
+      controller.abort();
+    }, 10000);
+  });
+  try {
+    // Include reading the response body in the deadline. The race also settles
+    // if a transport fails to honor abort; its late result cannot mutate orders.
+    return await Promise.race([deadline, (async () => {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      const result = await response.json();
+      if (!response.ok) { const error = new Error(result.error?.message || '無法完成操作'); error.status = response.status; throw error; }
+      return result.data;
+    })()]);
+  } finally { clearTimeout(timer); }
 }
 $('#products').addEventListener('error', event => {
   if (event.target.tagName === 'IMG') event.target.hidden = true;
@@ -75,6 +191,7 @@ function openProduct(id) {
   $('#dialog-subtitle').textContent = product.nameVi;
   $('#variants').innerHTML = product.variants.map((v, i) => `<label class="variant"><span><input name="variant" type="radio" value="${escapeHtml(v.id)}" ${i === 0 ? 'checked' : ''}> ${escapeHtml(v.label)}</span><strong>${money(v.price)}</strong></label>`).join('');
   $('#product-error').textContent = '';
+  $('#customer-note').value = ''; $('#internal-note').value = '';
   $('#option-groups').innerHTML = (product.optionGroups || []).map((g, i) => {
     const single = g.maxSelect === 1;
     const defaults = g.defaultValueIds || [];
@@ -85,6 +202,16 @@ function openProduct(id) {
   $('#toppings').innerHTML = product.toppings.length ? product.toppings.map((t, i) => `<div class="topping-row"><span>${escapeHtml(t.nameZh)}<small>${money(t.price)} / ${escapeHtml(t.unit)}，最多 ${t.maxPortions} 份</small></span><div class="stepper"><button type="button" data-topping-index="${i}" data-change="-1" aria-label="減少${escapeHtml(t.nameZh)}">−</button><output data-portions="${i}">0</output><button type="button" data-topping-index="${i}" data-change="1" aria-label="增加${escapeHtml(t.nameZh)}">＋</button></div></div>`).join('') : '<p class="subtext">此商品沒有配料選項。</p>';
   $('#quantity').textContent = '1';
   dialog.showModal();
+}
+function showQuote(quote) {
+  displayProjection = projectQuote(quote);
+  displayRevision++; displayAckAt = 0;
+  sendDisplaySnapshot(); updateDisplayStatus();
+  $('#item-count').textContent = `${state.items.reduce((sum, item) => sum + item.quantity, 0)} 杯`;
+  $('#order-items').innerHTML = quote.items.map((item, index) => `<div class="order-item"><div class="item-top"><span class="item-name">${escapeHtml(item.nameZh)}</span><strong>${money(item.lineTotal)}</strong></div><p class="item-detail">${escapeHtml(item.variant)} × ${item.quantity} 杯${(item.options || []).map(g => `<br>${escapeHtml(g.nameZh)}：${g.values.map(v => escapeHtml(v.nameZh)).join('、')}`).join('')}${item.toppings.map(t => `<br>${escapeHtml(t.nameZh)} × ${t.portions} 份 / 杯`).join('')}${item.customerNote ? `<br>顧客備註：${escapeHtml(item.customerNote)}` : ''}${item.internalNote ? `<br>內部備註：${escapeHtml(item.internalNote)}` : ''}</p><div class="item-bottom"><small>每杯 ${money(item.unitPrice)}</small><button class="remove" type="button" data-remove="${index}">移除</button></div></div>`).join('');
+  $('#subtotal').textContent = money(quote.subtotal);
+  $('#total').textContent = money(quote.total);
+  $('#order-error').textContent = '';
 }
 async function renderOrder() {
   const revision = ++state.revision;
@@ -103,21 +230,18 @@ async function renderOrder() {
   itemsElement.innerHTML = '<p>正在計算目前訂單⋯</p>';
   $('#subtotal').textContent = $('#total').textContent = '—';
   try {
-    const quote = await request('/api/v1/quotes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ menuRelease: state.catalog.release, items: state.items }) });
+    const quote = await request('/api/v1/quotes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: quoteBody(state.catalog.release, state.items) });
     if (revision !== state.revision) return;
-    displayProjection = projectQuote(quote);
-    displayRevision++; displayAckAt = 0;
-    sendDisplaySnapshot(); updateDisplayStatus();
-    itemsElement.innerHTML = quote.items.map((item, index) => `<div class="order-item"><div class="item-top"><span class="item-name">${escapeHtml(item.nameZh)}</span><strong>${money(item.lineTotal)}</strong></div><p class="item-detail">${escapeHtml(item.variant)} × ${item.quantity} 杯${(item.options || []).map(g => `<br>${escapeHtml(g.nameZh)}：${g.values.map(v => escapeHtml(v.nameZh)).join('、')}`).join('')}${item.toppings.map(t => `<br>${escapeHtml(t.nameZh)} × ${t.portions} 份 / 杯`).join('')}</p><div class="item-bottom"><small>每杯 ${money(item.unitPrice)}</small><button class="remove" type="button" data-remove="${index}">移除</button></div></div>`).join('');
-    $('#subtotal').textContent = money(quote.subtotal);
-    $('#total').textContent = money(quote.total);
-    $('#order-error').textContent = '';
+    showQuote(quote);
   } catch (error) {
     if (revision !== state.revision) return;
     displayProjection = { phase: 'unavailable' };
     displayRevision++; displayAckAt = 0;
     sendDisplaySnapshot(); updateDisplayStatus();
-    itemsElement.innerHTML = '<p>無法計算目前訂單。若菜單已更新，請重新載入頁面並重新點餐。</p><button class="remove" type="button" data-clear>清除訂單</button>';
+    itemsElement.innerHTML = '<p>無法計算目前訂單，可移除明細後重試。</p>' + state.items.map((item, index) => {
+      const product = state.catalog.products?.find(p => p.id === item.productId);
+      return `<div class="order-item"><strong>${escapeHtml(product?.nameZh || item.productId || '商品')} × ${item.quantity} 杯</strong><button class="remove" type="button" data-remove="${index}">移除</button></div>`;
+    }).join('') + '<button class="remove" type="button" data-clear>清除訂單</button>';
     $('#subtotal').textContent = $('#total').textContent = '—';
     $('#order-error').textContent = error.message;
   }
@@ -153,8 +277,12 @@ $('#product-form').addEventListener('submit', event => {
     }
     if (valueIds.length) options.push({ groupId: group.id, valueIds });
   }
-  state.items.push({ productId: state.product.id, variantId: $('input[name="variant"]:checked', dialog).value, quantity: state.quantity, toppings: state.product.toppings.flatMap((t, index) => state.portions[index] ? [{ id: t.id, portions: state.portions[index] }] : []), options });
-  dialog.close(); renderOrder();
+  try {
+    const item = { productId: state.product.id, variantId: $('input[name="variant"]:checked', dialog).value, quantity: state.quantity, toppings: state.product.toppings.flatMap((t, index) => state.portions[index] ? [{ id: t.id, portions: state.portions[index] }] : []), options, customerNote: normalizeNote($('#customer-note').value), internalNote: normalizeNote($('#internal-note').value) };
+    quoteBody(state.catalog.release, [...state.items, item]);
+    state.items.push(item);
+    dialog.close(); void renderOrder();
+  } catch (error) { $('#product-error').textContent = error.message; }
 });
 $('#order-items').addEventListener('click', event => {
   const button = event.target.closest('[data-remove]');

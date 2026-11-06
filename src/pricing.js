@@ -1,8 +1,7 @@
 import { catalog } from './catalog.js';
 
-export class ValidationError extends Error {
-  constructor(message) { super(message); this.name = 'ValidationError'; }
-}
+import { ValidationError, normalizeNote } from '../public/validation.js';
+export { ValidationError } from '../public/validation.js';
 
 const maxMoney = 1000000000000n;
 function fail(message) { throw new ValidationError(message); }
@@ -15,6 +14,7 @@ export function quoteOrder(input, selectedCatalog = catalog) {
   let total = 0n;
   const items = input.items.map((item) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) fail('商品明細格式不正確');
+    const customerNote = normalizeNote(item.customerNote), internalNote = normalizeNote(item.internalNote);
     const product = selectedCatalog.products.find(p => p.id === item.productId);
     const variant = product?.variants.find(v => v.id === item.variantId);
     if (!product || !variant) fail('商品或容量不存在');
@@ -57,7 +57,7 @@ export function quoteOrder(input, selectedCatalog = catalog) {
     const lineTotal = unitPrice * BigInt(item.quantity);
     total += lineTotal;
     if (total > maxMoney) fail('訂單金額超出上限');
-    return { productId: product.id, variantId: variant.id, nameZh: product.nameZh, nameVi: product.nameVi, variant: variant.label, quantity: item.quantity, toppings, options, unitPrice: String(unitPrice), lineTotal: String(lineTotal) };
+    return { productId: product.id, variantId: variant.id, nameZh: product.nameZh, nameVi: product.nameVi, variant: variant.label, quantity: item.quantity, toppings, options, customerNote, internalNote, unitPrice: String(unitPrice), lineTotal: String(lineTotal) };
   });
   return { menuRelease: selectedCatalog.release, currency: 'VND', items, subtotal: String(total), total: String(total) };
 }

@@ -10,7 +10,7 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">IU</span><span>IUTRA<small>門市點餐</small></span></div>
-    <div class="header-actions"><a id="open-display" href="/display" target="_blank" rel="noopener">開啟客顯</a><span id="display-status" role="status">客顯未連線</span><a href="/admin">商品管理</a><div class="top-status"><span class="status-dot"></span><span id="catalog-status">載入菜單中</span></div></div>
+    <div class="header-actions"><label class="display-mode">客顯模式 <select id="display-mode"><option value="view">僅顯示</option><option value="touch">顧客點餐</option></select></label><a id="open-display" href="/display" target="_blank" rel="noopener">開啟客顯</a><span id="display-status" role="status">客顯未連線</span><a href="/admin">商品管理</a><div class="top-status"><span class="status-dot"></span><span id="catalog-status">載入菜單中</span></div></div>
   </header>
   <div class="notice" id="notice">訂單目前不會儲存，也不能收款。</div>
   <main class="workspace">
@@ -38,6 +38,7 @@
       <fieldset><legend>選擇容量</legend><div id="variants" class="variants"></div></fieldset>
       <div id="option-groups"></div>
       <fieldset><legend>加點配料 <small>每杯份數</small></legend><div id="toppings"></div></fieldset>
+      <fieldset class="notes"><legend>商品備註</legend><label for="customer-note">顧客可見備註</label><input id="customer-note" maxlength="200" placeholder="例如：少一點茶"><label for="internal-note">內部備註（不顯示在客顯）</label><input id="internal-note" maxlength="200" placeholder="供店員參考"></fieldset>
       <p id="product-error" class="error" role="alert"></p>
       <div class="quantity-line"><span>杯數</span><div class="stepper"><button type="button" data-quantity="-1" aria-label="減少杯數">−</button><output id="quantity">1</output><button type="button" data-quantity="1" aria-label="增加杯數">＋</button></div></div>
       <button class="add-button" type="submit">加入訂單</button>

@@ -15,7 +15,22 @@
     <p id="message">等待店員開始點餐</p>
     <div id="items"></div>
     <div id="amount" hidden><span>應付金額</span><strong id="total"></strong></div>
+    <section id="touch-menu" hidden aria-label="觸控點餐">
+      <div class="menu-heading"><h2>選擇飲品</h2><p>Chọn đồ uống</p></div>
+      <div id="touch-categories" class="touch-categories"></div>
+      <div id="touch-products" class="touch-products"></div>
+      <p id="touch-status" role="status"></p>
+    </section>
   </main>
+  <dialog id="touch-dialog" aria-labelledby="touch-title">
+    <form id="touch-form">
+      <div class="touch-dialog-head"><div><h2 id="touch-title"></h2><p id="touch-subtitle"></p></div><button type="button" id="touch-close" aria-label="關閉">×</button></div>
+      <div id="touch-fields"></div>
+      <label class="touch-note">顧客備註 <small>選填，最多 200 字</small><input id="touch-note" type="text" maxlength="200" autocomplete="off"></label>
+      <p id="touch-error" role="alert"></p>
+      <button class="touch-submit" type="submit">加入點餐</button>
+    </form>
+  </dialog>
   <footer>開發測試畫面 · 同瀏覽器分頁連線，尚未驗證獨立螢幕硬體</footer>
 </body>
 </html>
