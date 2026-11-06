@@ -56,12 +56,15 @@ function render() {
 $('#access-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (state.busy || state.token) return;
-  if (!window.isSecureContext) { message('請透過 HTTPS 或本機 localhost 登入，以保護帳號密碼。'); return; }
   const epoch = ++state.epoch;
   const resuming = Boolean(state.catalog);
   busy(true); message('正在登入⋯');
   let newToken = '';
   try {
+    if (!window.isSecureContext) {
+      const config = await api('/api/v1/auth/config', 'GET', undefined, '', epoch);
+      if (config.allowInsecureHttp !== true) throw new Error('伺服器尚未啟用區網 HTTP 測試登入，請設定 AUTH_TRANSPORT_MODE=lan-development 或使用 HTTPS。');
+    }
     const session = await api('/api/v1/sessions', 'POST', { loginName: $('#login-name').value, password: $('#password').value }, '', epoch);
     newToken = session.token;
     if (!session.user.canManageCatalog) throw new Error('沒有商品管理權限');

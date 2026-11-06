@@ -56,6 +56,7 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
         res.writeHead(200, { 'content-type': type, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
         return res.end(content);
       }
+      if (req.method === 'GET' && path === '/api/v1/auth/config') return send(res, 200, { request_id: requestId, data: { allowInsecureHttp: authTransport.allowsInsecureHttp(req) } }, requestId);
       const authPath = path === '/api/v1/sessions' || path === '/api/v1/sessions/current' || path === '/api/v1/me' || path === '/api/v1/admin' || path.startsWith('/api/v1/admin/');
       if (authPath) authTransport.requireProtectedTransport(req);
       if (req.method === 'POST' && path === '/api/v1/sessions') {

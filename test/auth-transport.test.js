@@ -57,6 +57,35 @@ test('local-development 明確設定只放行 loopback HTTP，設定錯誤即失
   for (const trustedProxyIps of ['*', 'localhost', '127.0.0.0/8', '127.0.0.1,', 'bad', 'fe80::1%lo0', ['127.0.0.1']]) assert.throws(() => transport({ trustedProxyIps }));
 });
 
+test('lan-development 放行私有區網與 loopback HTTP，不信任偽造來源標頭', () => {
+  const auth = transport({ mode: 'lan-development' });
+  for (const ip of ['127.0.0.1', '::1', '192.168.10.30', '10.1.2.3', '172.16.0.1', '172.31.255.254', '::ffff:192.168.10.30', 'fd00::1']) {
+    assert.equal(auth.allowsInsecureHttp(req(ip)), true);
+    auth.requireProtectedTransport(req(ip));
+  }
+  for (const ip of ['203.0.113.1', '172.15.0.1', '172.32.0.1', '192.169.0.1', '2001:db8::1', undefined]) {
+    const request = req(ip, { 'x-real-ip': '192.168.10.30', 'x-forwarded-proto': 'https' });
+    assert.equal(auth.allowsInsecureHttp(request), false);
+    denied(() => auth.requireProtectedTransport(request));
+  }
+});
+
+test('只有 lan-development 放行指定 100.111/16，拒絕相鄰網段及偽造標頭', () => {
+  const auth = transport({ mode: 'lan-development' });
+  for (const ip of ['100.111.0.0', '100.111.0.1', '100.111.255.255', '::ffff:100.111.1.2', '::ffff:646f:102']) {
+    assert.equal(auth.allowsInsecureHttp(req(ip)), true);
+    auth.requireProtectedTransport(req(ip));
+    for (const mode of ['https-proxy', 'local-development']) {
+      denied(() => transport({ mode }).requireProtectedTransport(req(ip)));
+    }
+  }
+  for (const ip of ['100.110.255.255', '100.112.0.0', '100.64.0.1', '100.127.255.255', '203.0.113.1']) {
+    const request = req(ip, { 'x-real-ip': '100.111.1.2', 'x-forwarded-for': '100.111.1.2' });
+    assert.equal(auth.allowsInsecureHttp(request), false);
+    denied(() => auth.requireProtectedTransport(request));
+  }
+});
+
 test('來源只信任已列代理的單一有效 X-Real-IP，無效時以 peer 計數', () => {
   const auth = transport({ trustedProxyIps: '127.0.0.1' });
   assert.equal(auth.sourceIP(req('127.0.0.1', { 'x-real-ip': '203.0.113.7' })), '203.0.113.7');

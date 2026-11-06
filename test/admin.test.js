@@ -7,7 +7,7 @@ const source = await readFile(new URL('../public/admin.js', import.meta.url), 'u
 const response = (data, status = 200) => ({ ok: status < 400, status, json: async () => status < 400 ? { data } : { error: { message: 'expired' } } });
 const session = (id = 'manager') => ({ token: `${id}-token`, user: { id, loginName: id, displayName: id, canManageCatalog: true } });
 const draft = () => ({ revision: '7', catalog: { categories: [{ id: 'tea', nameZh: '茶', nameVi: 'Tra' }], products: [] } });
-function setup() {
+function setup(secure = true) {
   const elements = new Map();
   const get = key => {
     if (!elements.has(key)) elements.set(key, { value: '', hidden: false, listeners: {}, classList: { toggle() {} }, addEventListener(type, handler) { this.listeners[type] = handler; } });
@@ -16,7 +16,7 @@ function setup() {
   const calls = []; const pending = [];
   const context = vm.createContext({
     document: { querySelector: get, querySelectorAll: () => ['#login-name', '#password', '#login-submit', '#logout'].map(get) },
-    window: { isSecureContext: true, addEventListener() {} }, confirm: () => true,
+    window: { isSecureContext: secure, addEventListener() {} }, confirm: () => true,
     fetch: (path, options) => { calls.push({ path, ...options }); return new Promise(resolve => pending.push(resolve)); }
   });
   vm.runInContext(`${source}\nglobalThis.testing = { state, dirty };`, context);
@@ -30,6 +30,23 @@ async function signIn(env) {
   const task = env.login(); env.pending.shift()(response(session())); await tick();
   env.pending.shift()(response(draft())); await task;
 }
+
+test('區網 HTTP 經伺服器允許後可登入，未啟用時不傳送密碼', async () => {
+  for (const allowed of [false, true]) {
+    const env = setup(false); const task = env.login();
+    assert.equal(env.calls[0].path, '/api/v1/auth/config');
+    assert.equal(env.calls[0].body, undefined);
+    env.pending.shift()(response({ allowInsecureHttp: allowed })); await tick();
+    if (allowed) {
+      assert.equal(env.calls[1].path, '/api/v1/sessions');
+      env.pending.shift()(response(session())); await tick();
+      env.pending.shift()(response(draft()));
+    }
+    await task;
+    assert.equal(Boolean(env.state.token), allowed);
+    assert.equal(env.calls.length, allowed ? 3 : 1);
+  }
+});
 
 test('儲存時停用衝突操作，登出後晚到回應不能恢復資料或解鎖新操作', async () => {
   const env = setup(); await signIn(env);

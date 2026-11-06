@@ -24,6 +24,17 @@ npm run dev
 
 僅在本機開發時，明確設定 `AUTH_TRANSPORT_MODE=local-development`、`HOST=127.0.0.1`，並維持 `TRUSTED_PROXY_IPS=` 空白，才允許 loopback HTTP 登入；此模式不開放 LAN HTTP。登入來源每個 60 秒固定視窗最多嘗試 10 次（含成功及格式錯誤），第 11 次回傳 429。每個程序最多保留 10,000 個來源，每次請求清理過期記錄，容量滿時拒絕新來源，避免淘汰活躍記錄而繞過限制；重啟會重設，多程序部署須另設共用限流。
 
+自己的可信區網測試可在伺服器 `.env` 設定以下內容後重新啟動服務，保留原有的 `DATABASE_URL`：
+
+```dotenv
+HOST=0.0.0.0
+PORT=3000
+AUTH_TRANSPORT_MODE=lan-development
+TRUSTED_PROXY_IPS=
+```
+
+之後可直接開啟 `http://192.168.10.20:3000/admin`（依伺服器實際 IP 調整）。此模式允許 loopback、IPv4 私有網段 10/8、172.16/12、192.168/16、指定的 Tailscale IPv4 網段 100.111.0.0/16，以及 IPv6 ULA 來源的 HTTP 管理操作；不採信轉發標頭來放行來源。帳號、權限與限流仍需通過。密碼與 token 在 HTTP 上未經 TLS 加密，僅供可信區網開發測試，不用於公開部署；改回 `AUTH_TRANSPORT_MODE=https-proxy` 並重啟即可恢復 HTTPS 要求。前端送出密碼前會先查詢伺服器是否允許 HTTP 登入。
+
 執行測試（HTTP 整合測試自行明確啟用本機模式；安全傳輸測試自行指定安全模式）：
 
 ```bash

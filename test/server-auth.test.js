@@ -51,6 +51,20 @@ test('安全模式在驗證前拒絕 HTTP，可信代理須提供 https，客顯
   }, { authTransport: createAuthTransport({ mode: 'https-proxy', trustedProxyIps: '' }) });
 });
 
+test('區網測試模式公布 HTTP 登入設定並保留登入權限檢查', async () => {
+  await withServer(async base => {
+    const config = await request(base, '/api/v1/auth/config');
+    assert.equal(config.body.data.allowInsecureHttp, true);
+    assert.equal((await request(base, '/api/v1/admin/catalog')).status, 401);
+    const login = await request(base, '/api/v1/sessions', { method: 'POST', data: { loginName: 'manager', password: 'valid-password' } });
+    assert.equal(login.status, 200);
+    assert.equal((await request(base, '/api/v1/admin/catalog', { token: login.body.data.token })).status, 200);
+  }, { authTransport: createAuthTransport({ mode: 'lan-development', trustedProxyIps: '' }) });
+  await withServer(async base => {
+    assert.equal((await request(base, '/api/v1/auth/config')).body.data.allowInsecureHttp, false);
+  }, { authTransport: createAuthTransport({ mode: 'https-proxy', trustedProxyIps: '' }) });
+});
+
 test('來源限流跨帳號且忽略不可信 X-Real-IP，在驗證前拒絕第 11 次', async () => {
   let calls = 0;
   await withServer(async base => {

@@ -29,7 +29,7 @@ export function createAuthTransport({
   mode = process.env.AUTH_TRANSPORT_MODE ?? 'https-proxy',
   trustedProxyIps = process.env.TRUSTED_PROXY_IPS ?? ''
 } = {}) {
-  if (!['https-proxy', 'local-development'].includes(mode)) throw new Error('AUTH_TRANSPORT_MODE must be https-proxy or local-development');
+  if (!['https-proxy', 'local-development', 'lan-development'].includes(mode)) throw new Error('AUTH_TRANSPORT_MODE must be https-proxy, local-development or lan-development');
   if (typeof trustedProxyIps !== 'string') throw new Error('TRUSTED_PROXY_IPS must be a comma-separated list of IP addresses');
   const entries = trustedProxyIps === '' ? [] : trustedProxyIps.split(',').map(ip => ip.trim());
   const trusted = new Set(entries.map(ip => {
@@ -39,12 +39,19 @@ export function createAuthTransport({
   }));
   function peer(req) { return normalizeIP(req.socket.remoteAddress); }
   function isTrusted(req) { return trusted.has(peer(req)); }
+  function allowsInsecureHttp(req) {
+    const address = peer(req);
+    const local = address === '::1' || Boolean(address?.startsWith('127.'));
+    const privateNetwork = address && (address.startsWith('10.') || address.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(address) || /^(fc|fd)[0-9a-f]{2}:/.test(address));
+    return Boolean((mode === 'local-development' && local) ||
+      (mode === 'lan-development' && (local || privateNetwork || address?.startsWith('100.111.'))));
+  }
   return {
+    allowsInsecureHttp,
     requireProtectedTransport(req) {
-      const address = peer(req);
-      const local = address === '::1' || address?.startsWith('127.');
       if (req.socket.encrypted === true ||
-          (mode === 'local-development' && local) ||
+          allowsInsecureHttp(req) ||
           (isTrusted(req) && singleHeader(req, 'x-forwarded-proto') === 'https')) return;
       throw new ServiceError(403, 'HTTPS_REQUIRED', '登入及管理操作須透過 HTTPS');
     },
