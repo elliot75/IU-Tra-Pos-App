@@ -37,9 +37,11 @@ export function validateCatalog(catalog, { publishing = false } = {}) {
     fields(product, ['id', 'categoryId', 'nameZh', 'nameVi', 'variants', 'toppings', ...(Object.hasOwn(product ?? {}, 'optionGroups') ? ['optionGroups'] : []), ...(Object.hasOwn(product ?? {}, 'imageUrl') ? ['imageUrl'] : [])], '商品');
     if (Object.hasOwn(product, 'imageUrl') && product.imageUrl !== '') {
       if (typeof product.imageUrl !== 'string' || product.imageUrl.length > 2048 || /[\s\u0000-\u001f\u007f]/.test(product.imageUrl)) fail('圖片網址不正確');
-      let url;
-      try { url = new URL(product.imageUrl); } catch { fail('圖片網址不正確'); }
-      if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) fail('圖片網址須為 HTTPS 網址');
+      if (!/^\/catalog-images\/[a-f0-9]{64}\.(?:jpg|png|webp|gif)$/.test(product.imageUrl)) {
+        let url;
+        try { url = new URL(product.imageUrl); } catch { fail('圖片網址不正確'); }
+        if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) fail('圖片網址須為 HTTPS 網址或本機商品圖片');
+      }
     }
     id(product.id); unique(products, product.id); id(product.categoryId);
     if (!categories.has(product.categoryId)) fail('商品分類不存在');

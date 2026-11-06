@@ -95,10 +95,10 @@ function renderMenu() {
     const min = product.variants.reduce((a, b) => BigInt(a.price) <= BigInt(b.price) ? a : b);
     const art = make('span', 'touch-product-art');
     const fallback = make('span', 'touch-product-fallback', 'IUTRA'); art.append(fallback);
-    if (typeof product.imageUrl === 'string' && /^https:\/\//i.test(product.imageUrl)) {
+    if (typeof product.imageUrl === 'string' && (/^https:\/\//i.test(product.imageUrl) || /^\/catalog-images\/[a-f0-9]{64}\.(?:jpg|png|webp|gif)$/.test(product.imageUrl))) {
       try {
-        const url = new URL(product.imageUrl);
-        if (url.protocol === 'https:' && url.hostname && !url.username && !url.password) {
+        const url = new URL(product.imageUrl, location.origin);
+        if ((url.origin === location.origin && /^\/catalog-images\/[a-f0-9]{64}\.(?:jpg|png|webp|gif)$/.test(url.pathname)) || (url.protocol === 'https:' && url.hostname && !url.username && !url.password)) {
           const image = make('img'); image.alt = ''; image.loading = 'lazy'; image.referrerPolicy = 'no-referrer';
           image.addEventListener('error', () => image.remove()); image.src = url.href; art.append(image);
         }

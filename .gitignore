@@ -4,3 +4,7 @@ node_modules/
 !.env.example
 .DS_Store
 coverage/
+# Private source-system exports and database inspection reports
+private/posapp-audit/
+# Imported shop images are local business data
+public/catalog-images/
