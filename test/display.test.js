@@ -155,6 +155,54 @@ test('客顯拒絕錯 pair、錯來源、錯 nonce、舊 revision 與無效訂�
   assert.equal(env.mutations(), mutations); assert.equal(channel.sent.length, sent);
 });
 
+test('客顯拒絕不完整或不一致的明細金額，並相容舊主畫面', async () => {
+  const env = await display(randomUUID()); const channel = env.channels[0];
+  const order = orderFor(env); const item = order.items[0];
+  for (const prices of [
+    { unitPrice: '22000' }, { lineTotal: '22000' }, { unitPrice: '-1', lineTotal: '0' },
+    { unitPrice: 22000, lineTotal: '22000' }, { unitPrice: '1'.repeat(31), lineTotal: '1' },
+    { unitPrice: '22000', lineTotal: '44000' }, { unitPrice: '22000', lineTotal: '22.000' }
+  ]) {
+    channel.onmessage({ data: { ...order, items: [{ ...item, ...prices }] } });
+    assert.equal(env.get('amount').hidden, true);
+    assert.equal(channel.sent.length, 1, 'invalid amounts must not be acknowledged');
+  }
+  channel.onmessage({ data: order });
+  assert.equal(env.get('amount').hidden, false);
+  assert.equal(env.get('items').children[0].children.length, 2, 'older host can omit both prices');
+  channel.onmessage({ data: { ...order, revision: 3, total: '0', items: [{ ...item, unitPrice: '0', lineTotal: '0' }] } });
+  assert.equal(env.get('items').children[0].children[2].children[0].textContent, '每杯 0 ₫');
+  assert.equal(env.get('items').children[0].children[2].children[1].textContent, '小計 0 ₫');
+});
+
+test('兩種客顯模式顯示伺服器試算的單價與小計，並隨訂單更新', async () => {
+  const transport = bus(); const host = await main(transport);
+  host.context.testing.state.catalog = structuredClone(catalog);
+  host.context.fetch = async (_, options) => ({ ok: true, json: async () => ({ data: quoteOrder(JSON.parse(options.body), catalog) }) });
+  const customer = await display(host.pair, transport); transport.flush();
+  const { state, renderOrder } = host.context.testing;
+  state.items = [{ productId: 'oolong', variantId: 'oolong-500', quantity: 2,
+    toppings: [{ id: 'example-topping', portions: 1 }], options: [], customerNote: '少冰', internalNote: '不得顯示' }];
+  await renderOrder(); transport.flush();
+  const checkPrices = (unit, line, total) => {
+    const row = customer.get('items').children[0];
+    assert.equal(row.children[2].children[0].textContent, `每杯 ${unit}`);
+    assert.equal(row.children[2].children[1].textContent, `小計 ${line}`);
+    assert.equal(customer.get('total').textContent, total);
+  };
+  checkPrices('27.000 ₫', '54.000 ₫', '54.000 ₫');
+  assert.equal(JSON.stringify(host.channels[0].sent).includes('不得顯示'), false);
+  host.get('#display-mode').listeners.change({ target: { value: 'touch' } }); transport.flush();
+  assert.equal(customer.get('touch-menu').hidden, false);
+  checkPrices('27.000 ₫', '54.000 ₫', '54.000 ₫');
+  state.items[0].variantId = 'oolong-700'; state.items[0].quantity = 1;
+  await renderOrder(); transport.flush();
+  checkPrices('29.000 ₫', '29.000 ₫', '29.000 ₫');
+  state.items = []; await renderOrder(); transport.flush();
+  assert.equal(customer.get('items').children.length, 0);
+  assert.equal(customer.get('amount').hidden, true);
+});
+
 test('相同 session/revision 心跳只更新時間及 ACK，完全不重繪 DOM', async () => {
   const env = await display(randomUUID()); const channel = env.channels[0]; const order = orderFor(env);
   channel.onmessage({ data: order });
@@ -327,7 +375,7 @@ test('主畫面只接受對應 pair 請求與有效 ACK，廣播嚴格報價白�
   pending[1]({ ok: true, json: async () => ({ data: quote('200') }) }); await second;
   assert.deepEqual(channel.sent.at(-1), {
     type: 'snapshot', pair, nonce, session: pair, revision: 4, mode: 'view', phase: 'order',
-    items: [{ name: '茶', variant: '500 ml', quantity: 1, customerNote: '少冰', options: [{ name: '甜度', values: ['半糖'] }], toppings: [{ name: '珍珠', portions: 1 }] }], total: '200'
+    items: [{ name: '茶', variant: '500 ml', quantity: 1, customerNote: '少冰', unitPrice: '200', lineTotal: '200', options: [{ name: '甜度', values: ['半糖'] }], toppings: [{ name: '珍珠', portions: 1 }] }], total: '200'
   });
   assert.equal(JSON.stringify(channel.sent).includes('TOKEN-SECRET'), false);
   const third = renderOrder();

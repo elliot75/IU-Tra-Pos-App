@@ -91,6 +91,7 @@ updateDisplayStatus();
 function projectQuote(quote) {
   return { phase: 'order', items: quote.items.map(item => ({
     name: item.nameZh, variant: item.variant, quantity: item.quantity, customerNote: item.customerNote || '',
+    unitPrice: item.unitPrice, lineTotal: item.lineTotal,
     options: (item.options || []).map(group => ({ name: group.nameZh, values: group.values.map(value => value.nameZh) })),
     toppings: item.toppings.map(topping => ({ name: topping.nameZh, portions: topping.portions }))
   })), total: String(quote.total) };

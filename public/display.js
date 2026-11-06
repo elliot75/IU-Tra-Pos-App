@@ -32,10 +32,15 @@ function reconnect() {
 function requestSnapshot() { if (channel) channel.postMessage({ type: 'request', pair, nonce }); }
 const text = value => typeof value === 'string' && value.length <= 500;
 const count = value => Number.isSafeInteger(value) && value > 0 && value <= 100;
+const amount = value => typeof value === 'string' && /^\d{1,30}$/.test(value);
+const moneyFormatter = new Intl.NumberFormat('vi-VN');
+const money = value => `${moneyFormatter.format(BigInt(value))} ₫`;
 function validOrder(data) {
   return Array.isArray(data.items) && data.items.length > 0 && data.items.length <= 100 &&
-    typeof data.total === 'string' && /^\d{1,30}$/.test(data.total) && data.items.every(item =>
+    amount(data.total) && data.items.every(item =>
       item && text(item.name) && text(item.variant) && (item.customerNote === undefined || text(item.customerNote)) && count(item.quantity) &&
+      ((item.unitPrice === undefined && item.lineTotal === undefined) ||
+        (amount(item.unitPrice) && amount(item.lineTotal) && BigInt(item.unitPrice) * BigInt(item.quantity) === BigInt(item.lineTotal))) &&
       Array.isArray(item.options) && item.options.length <= 100 && item.options.every(group =>
         group && text(group.name) && Array.isArray(group.values) && group.values.length <= 100 && group.values.every(text)) &&
       Array.isArray(item.toppings) && item.toppings.length <= 100 && item.toppings.every(topping =>
@@ -56,10 +61,17 @@ function render(data) {
     title.append(name, quantity);
     const detail = document.createElement('p'); detail.className = 'item-detail';
     detail.textContent = [item.variant, ...item.options.map(group => `${group.name}：${group.values.join('、')}`), ...item.toppings.map(topping => `${topping.name} × ${topping.portions} 份 / 杯`), ...(item.customerNote ? [`備註：${item.customerNote}`] : [])].join(' · ');
-    row.append(title, detail); return row;
+    row.append(title, detail);
+    if (item.unitPrice !== undefined) {
+      const prices = make('div', 'item-prices');
+      const unitPrice = make('span', '', `每杯 ${money(item.unitPrice)}`);
+      const lineTotal = make('strong', '', `小計 ${money(item.lineTotal)}`);
+      prices.append(unitPrice, lineTotal); row.append(prices);
+    }
+    return row;
   });
   element('items').replaceChildren(...rows);
-  element('total').textContent = `${new Intl.NumberFormat('vi-VN').format(BigInt(data.total))} ₫`;
+  element('total').textContent = money(data.total);
   element('amount').hidden = false;
 }
 // Build controls using textContent and DOM properties; the menu is supplied by the paired host.
@@ -76,7 +88,6 @@ function validCatalog(menu) {
     return true;
   } catch { return false; }
 }
-const money = value => `${new Intl.NumberFormat('vi-VN').format(BigInt(value))} ₫`;
 function touchStatus(message) { element('touch-status').textContent = message; }
 function renderMenu() {
   const visible = mode === 'touch' && !!catalog && !!lastSnapshot;
