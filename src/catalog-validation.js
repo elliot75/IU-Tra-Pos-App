@@ -34,7 +34,7 @@ export function validateCatalog(catalog, { publishing = false } = {}) {
     text(category.nameZh, '分類中文名稱'); text(category.nameVi, '分類越文名稱');
   }
   for (const product of catalog.products) {
-    fields(product, ['id', 'categoryId', 'nameZh', 'nameVi', 'variants', 'toppings'], '商品');
+    fields(product, ['id', 'categoryId', 'nameZh', 'nameVi', 'variants', 'toppings', ...(Object.hasOwn(product ?? {}, 'optionGroups') ? ['optionGroups'] : [])], '商品');
     id(product.id); unique(products, product.id); id(product.categoryId);
     if (!categories.has(product.categoryId)) fail('商品分類不存在');
     text(product.nameZh, '商品中文名稱'); text(product.nameVi, '商品越文名稱');
@@ -43,6 +43,23 @@ export function validateCatalog(catalog, { publishing = false } = {}) {
     for (const variant of product.variants) {
       fields(variant, ['id', 'label', 'price'], '規格');
       id(variant.id); unique(variants, variant.id); text(variant.label, '規格名稱'); money(variant.price);
+    }
+    const groups = new Set();
+    if (Object.hasOwn(product, 'optionGroups')) {
+      list(product.optionGroups, 50, '選項群組');
+      for (const group of product.optionGroups) {
+        fields(group, ['id', 'nameZh', 'nameVi', 'minSelect', 'maxSelect', 'values'], '選項群組');
+        id(group.id); unique(groups, group.id);
+        text(group.nameZh, '群組中文名稱'); text(group.nameVi, '群組越文名稱');
+        list(group.values, 50, '選項');
+        if (!group.values.length || !Number.isInteger(group.minSelect) || !Number.isInteger(group.maxSelect) || group.minSelect < 0 || group.minSelect > group.maxSelect || group.maxSelect > group.values.length) fail('選項數量限制不正確');
+        const values = new Set();
+        for (const value of group.values) {
+          fields(value, ['id', 'nameZh', 'nameVi'], '選項');
+          id(value.id); unique(values, value.id);
+          text(value.nameZh, '選項中文名稱'); text(value.nameVi, '選項越文名稱');
+        }
+      }
     }
     const toppings = new Set();
     for (const topping of product.toppings) {

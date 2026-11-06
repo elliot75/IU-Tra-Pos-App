@@ -10,7 +10,7 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">IU</span><span>IUTRA<small>門市點餐</small></span></div>
-    <div class="header-actions"><a href="/admin">商品管理</a><div class="top-status"><span class="status-dot"></span><span id="catalog-status">載入菜單中</span></div></div>
+    <div class="header-actions"><a id="open-display" href="/display" target="_blank" rel="noopener">開啟客顯</a><span id="display-status" role="status">客顯未連線</span><a href="/admin">商品管理</a><div class="top-status"><span class="status-dot"></span><span id="catalog-status">載入菜單中</span></div></div>
   </header>
   <div class="notice" id="notice">訂單目前不會儲存，也不能收款。</div>
   <main class="workspace">
@@ -36,7 +36,9 @@
     <form id="product-form">
       <div class="dialog-head"><div><p class="kicker">設定飲品</p><h2 id="dialog-title">烏龍茶</h2><span id="dialog-subtitle" class="subtext"></span></div><button class="close" type="button" aria-label="關閉">×</button></div>
       <fieldset><legend>選擇容量</legend><div id="variants" class="variants"></div></fieldset>
+      <div id="option-groups"></div>
       <fieldset><legend>加點配料 <small>每杯份數</small></legend><div id="toppings"></div></fieldset>
+      <p id="product-error" class="error" role="alert"></p>
       <div class="quantity-line"><span>杯數</span><div class="stepper"><button type="button" data-quantity="-1" aria-label="減少杯數">−</button><output id="quantity">1</output><button type="button" data-quantity="1" aria-label="增加杯數">＋</button></div></div>
       <button class="add-button" type="submit">加入訂單</button>
     </form>

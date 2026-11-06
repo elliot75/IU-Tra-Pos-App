@@ -8,10 +8,10 @@
 </head>
 <body>
 <header class="topbar"><div class="brand"><span class="brand-mark">IU</span><span>IUTRA<small>商品管理</small></span></div><a href="/">返回點餐</a></header>
-<div class="notice">開發模式：菜單管理尚未具備具名帳號、門市權限與稽核，請勿公開至網路或用於正式營業。</div>
+<div class="notice">開發模式：門市權限與稽核尚未完成，請勿公開至網路或用於正式營業。</div>
 <main class="admin-main">
   <div class="admin-heading"><div><p class="kicker">菜單管理</p><h1>商品與售價</h1><p class="subtext">先編輯並儲存草稿，再發布給點餐畫面使用。</p></div><span class="menu-tag" id="revision">尚未載入</span></div>
-  <section class="access-panel" aria-labelledby="access-title"><div><h2 id="access-title">管理存取</h2><p>輸入本機環境中設定的管理權杖。權杖只保留在本頁記憶體中。</p></div><form id="access-form"><label for="token">管理權杖</label><div class="access-controls"><input id="token" type="password" autocomplete="off" required><button class="primary" type="submit">載入草稿</button></div></form></section>
+  <section class="access-panel" aria-labelledby="access-title"><div><h2 id="access-title">員工登入</h2><p>使用有商品管理權限的員工帳號。登入狀態僅保留在目前頁面。</p><p id="signed-in" hidden></p></div><form id="access-form"><label for="login-name">帳號</label><input id="login-name" type="text" autocomplete="username" required><label for="password">密碼</label><input id="password" type="password" autocomplete="current-password" required><div class="access-controls"><button id="login-submit" class="primary" type="submit">登入並載入草稿</button><button id="logout" class="secondary" type="button" hidden>登出</button></div></form></section>
   <p id="message" class="message" role="status" aria-live="polite"></p>
   <div id="editor" hidden>
     <section class="editor-section"><div class="editor-header"><div><h2>分類</h2><p>為商品建立中越文分類。</p></div><button class="secondary" type="button" data-action="add-category">新增分類</button></div><div id="category-list"></div></section>

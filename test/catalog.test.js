@@ -5,6 +5,7 @@ import { catalog } from '../src/catalog.js';
 import { validateCatalog } from '../src/catalog-validation.js';
 import { CatalogStore } from '../src/catalog-store.js';
 import { createServer } from '../src/server.js';
+import { createAuthTransport } from '../src/auth-transport.js';
 
 const example = () => structuredClone({ categories: catalog.categories, products: catalog.products });
 const clone = obj => structuredClone(obj);
@@ -33,6 +34,31 @@ test('驗證分類、商品、規格、配料及金額', () => {
   assert.throws(() => validateCatalog({ categories: [], products: [] }, { publishing: true }));
 });
 
+test('商品選項群組驗證名稱、識別碼及選擇數限制', () => {
+  const group = { id: 'ice', nameZh: '冰量', nameVi: 'Đá', minSelect: 1, maxSelect: 1, values: [{ id: 'less', nameZh: '少冰', nameVi: 'Ít đá' }] };
+  const data = example(); data.products[0].optionGroups = [group];
+  assert.doesNotThrow(() => validateCatalog(data, { publishing: true }));
+  const cases = [
+    x => x.products[0].optionGroups = null,
+    x => x.products[0].optionGroups = Array(51).fill(group),
+    x => x.products[0].optionGroups.push(clone(group)),
+    x => x.products[0].optionGroups[0].id = 'bad id',
+    x => x.products[0].optionGroups[0].nameVi = ' ',
+    x => x.products[0].optionGroups[0].values = [],
+    x => x.products[0].optionGroups[0].values.push(clone(group.values[0])),
+    x => x.products[0].optionGroups[0].values[0].id = 'bad id',
+    x => x.products[0].optionGroups[0].values[0].nameZh = '',
+    x => x.products[0].optionGroups[0].values = Array(51).fill(group.values[0]),
+    x => x.products[0].optionGroups[0].minSelect = -1,
+    x => x.products[0].optionGroups[0].minSelect = 0.5,
+    x => x.products[0].optionGroups[0].minSelect = 2,
+    x => x.products[0].optionGroups[0].maxSelect = 2,
+    x => x.products[0].optionGroups[0].maxSelect = 0,
+    x => x.products[0].optionGroups[0].values[0].price = '1'
+  ];
+  for (const change of cases) { const invalid = clone(data); change(invalid); assert.throws(() => validateCatalog(invalid)); }
+});
+
 // 模擬 pg 回傳值，檢查 API 與交易協定；此測試不連線任何資料庫。
 function fakePool() {
   let revision = 0, current = null, draft = { categories: [], products: [] };
@@ -54,7 +80,7 @@ function fakePool() {
   return { calls, releases, query, async connect() { return { query, release() {} }; } };
 }
 async function withServer(options, fn) {
-  const server = createServer(options); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const server = createServer({ ...options, authTransport: createAuthTransport({ mode: 'local-development', trustedProxyIps: '' }) }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   try { await fn(`http://127.0.0.1:${server.address().port}`); } finally { await new Promise(resolve => server.close(resolve)); }
 }
 async function request(base, path, method = 'GET', payload, token) {
@@ -62,23 +88,24 @@ async function request(base, path, method = 'GET', payload, token) {
   return { status: response.status, body: await response.json(), requestId: response.headers.get('x-request-id') };
 }
 
-test('未設定 token 或資料庫安全失敗，示範試算仍可使用', async () => {
+test('未登入或資料庫不可用時安全失敗，示範試算仍可使用', async () => {
   await withServer({}, async url => {
-    assert.equal((await request(url, '/api/v1/admin/catalog')).status, 503);
+    assert.equal((await request(url, '/api/v1/admin/catalog')).status, 401);
     assert.equal((await request(url, '/api/v1/catalog/published')).status, 503);
     const result = await request(url, '/api/v1/quotes', 'POST', { menuRelease: 'example-v1', items: [{ productId: 'oolong', variantId: 'oolong-500', quantity: 1, toppings: [], price: '1' }] });
     assert.equal(result.body.data.total, '22000'); assert.equal(result.body.request_id, result.requestId);
   });
-  await withServer({ adminToken: 'secret' }, async url => {
+  await withServer({}, async url => {
     assert.equal((await request(url, '/api/v1/admin/catalog')).status, 401);
     assert.equal((await request(url, '/api/v1/admin/catalog', 'GET', undefined, 'bad')).status, 401);
-    assert.equal((await request(url, '/api/v1/admin/catalog', 'GET', undefined, 'secret')).status, 503);
+    assert.equal((await request(url, '/api/v1/admin/catalog', 'GET', undefined, 'a'.repeat(43))).status, 503);
   });
 });
 
 test('草稿樂觀鎖、發布快照及當前版本試算', async () => {
   const pool = fakePool();
-  await withServer({ pool, adminToken: 'secret' }, async url => {
+  const staffAuth = { async authenticate(token) { assert.equal(token, 'secret'); return { id: 'manager', canManageCatalog: true }; } };
+  await withServer({ pool, staffAuth }, async url => {
     const admin = '/api/v1/admin/catalog';
     assert.equal((await request(url, '/api/v1/catalog/published')).status, 404);
     assert.deepEqual((await request(url, admin, 'GET', undefined, 'secret')).body.data, { revision: 0, catalog: { categories: [], products: [] } });

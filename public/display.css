@@ -1,0 +1,16 @@
+:root { font-family: system-ui, sans-serif; color: #293d32; background: #f4f6ee; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; }
+header { padding: 24px 6vw; display: flex; justify-content: space-between; align-items: center; background: #244d39; color: white; }
+header strong { font-size: 28px; letter-spacing: .12em; }
+main { width: min(900px, 88vw); margin: 6vh auto; flex: 1; }
+.eyebrow { color: #6b806d; letter-spacing: .2em; font-size: 14px; }
+h1 { font-size: clamp(32px, 4vw, 50px); margin: 0 0 14px; }
+#message { font-size: 20px; color: #66776a; }
+.item { padding: 22px 0; border-bottom: 1px solid #d8e1d5; }
+.item-title { display: flex; justify-content: space-between; gap: 20px; font-size: 24px; font-weight: 700; }
+.item-detail { margin: 8px 0 0; font-size: 18px; color: #5b6b5e; line-height: 1.6; }
+#amount { margin-top: 32px; display: flex; justify-content: space-between; align-items: baseline; gap: 20px; font-size: 24px; }
+#amount[hidden] { display: none; }
+#total { color: #244d39; font-size: clamp(36px, 5vw, 56px); }
+footer { padding: 18px 6vw; color: #66776a; font-size: 14px; }
