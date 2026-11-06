@@ -1,5 +1,5 @@
 import { DISPLAY_CHANNEL, DISPLAY_TIMEOUT, DISPLAY_HEARTBEAT, displayId, isDisplayId, displayPairFromHash } from './display-protocol.js';
-import { validateCatalog } from './catalog-validation.js';
+import { validateCatalog, isActive, isAvailable, productAvailable, optionMaxSelect } from './catalog-validation.js';
 import { normalizeNote } from './validation.js';
 
 const element = id => document.getElementById(id);
@@ -12,14 +12,17 @@ let revision = -1;
 let lastSnapshot = 0;
 let mode = 'view', catalog = null, pending = null, selectedProduct = null, phase = 'standby';
 let selectedCategory = null;
+let paymentExpiresAt = 0;
 const operationTimeout = 15000;
 
 function standby(message = '等待店員開始點餐') {
+  paymentExpiresAt = 0;
   element('heading').textContent = '歡迎光臨';
   element('message').textContent = message;
   element('items').replaceChildren();
   element('amount').hidden = true;
   element('total').textContent = '';
+  element('payment-info').replaceChildren();
 }
 function reconnect() {
   nonce = displayId(); session = null; revision = -1; lastSnapshot = 0;
@@ -47,12 +50,27 @@ function validOrder(data) {
         topping && text(topping.name) && count(topping.portions)));
 }
 function render(data) {
-  if (data.phase !== 'order') {
-    standby(data.phase === 'calculating' ? '正在計算訂單' : data.phase === 'unavailable' ? '目前無法計算訂單，請洽店員' : '等待店員開始點餐');
+  paymentExpiresAt = 0;
+  element('payment-info').replaceChildren();
+  if (!['order','confirm','payment'].includes(data.phase)) {
+    standby(data.phase === 'calculating' ? '正在計算訂單' : ['unavailable','exception'].includes(data.phase) ? '結果待核對，請洽店員；請勿再次付款' : '等待店員開始點餐');
+    if (data.phase === 'completed') { element('heading').textContent = '付款完成'; element('message').textContent = `取餐號 ${typeof data.pickupNumber === 'string' ? data.pickupNumber.slice(0,20) : ''}`; }
     return;
   }
-  element('heading').textContent = '您的點餐';
-  element('message').textContent = '請確認品項與規格';
+  element('heading').textContent = data.phase === 'payment' ? '等待付款' : data.phase === 'confirm' ? '核對訂單' : '您的點餐';
+  element('message').textContent = data.phase === 'order' ? '請確認品項與規格' : '結帳中，請由店員操作';
+  if (data.phase === 'payment') {
+    const info = element('payment-info');
+    info.append(make('p','',data.method === 'bank' ? '銀行轉帳，掃碼不代表已確認到帳' : data.method === 'wallet' ? '等待會員驗證與儲值扣款' : '請將現金交給店員'));
+    const bank = data.bankSnapshot;
+    paymentExpiresAt = data.method === 'bank' && Number.isFinite(Date.parse(data.expiresAt)) ? Date.parse(data.expiresAt) : 0;
+    if (data.method === 'bank' && paymentExpiresAt > Date.now() && bank && text(bank.accountName) && /^\d{6}$/.test(bank.bankCode) && /^\d{6,34}$/.test(bank.accountNumber)) {
+      info.append(make('p','',`${bank.accountName}　${bank.bankCode}　${bank.accountNumber}`));
+      if (typeof data.qrDataUrl === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]{1,100000}$/.test(data.qrDataUrl)) {
+        const image = make('img'); image.alt = '目前訂單付款 QR'; image.src = data.qrDataUrl; image.className = 'payment-qr'; info.append(image);
+      } else info.append(make('p','','付款碼尚未展示，請洽店員'));
+    }
+  }
   const rows = data.items.map(item => {
     const row = document.createElement('div'); row.className = 'item';
     const title = document.createElement('div'); title.className = 'item-title';
@@ -90,20 +108,21 @@ function validCatalog(menu) {
 }
 function touchStatus(message) { element('touch-status').textContent = message; }
 function renderMenu() {
-  const visible = mode === 'touch' && !!catalog && !!lastSnapshot;
+  const visible = mode === 'touch' && !!catalog && !!lastSnapshot && ['order','standby'].includes(phase);
   element('touch-menu').hidden = !visible;
   if (!visible) return;
   if (!catalog.categories.some(c => c.id === selectedCategory)) selectedCategory = catalog.categories[0]?.id;
   const categories = catalog.categories.map(category => {
     const button = make('button', category.id === selectedCategory ? 'touch-category active' : 'touch-category', `${category.nameZh} ${category.nameVi}`);
-    button.type = 'button'; button.disabled = !!pending || phase === 'calculating' || phase === 'unavailable';
+    button.type = 'button'; button.disabled = !!pending || !['order','standby'].includes(phase);
     button.addEventListener('click', () => { selectedCategory = category.id; renderMenu(); });
     return button;
   });
   element('touch-categories').replaceChildren(...categories);
-  const products = catalog.products.filter(p => p.categoryId === selectedCategory).map(product => {
-    const button = make('button', 'touch-product'); button.type = 'button'; button.disabled = !!pending || phase === 'calculating' || phase === 'unavailable';
-    const min = product.variants.reduce((a, b) => BigInt(a.price) <= BigInt(b.price) ? a : b);
+  const products = catalog.products.filter(p => isActive(p) && p.categoryId === selectedCategory).map(product => {
+    const button = make('button', 'touch-product'); button.type = 'button'; button.disabled = !productAvailable(product) || !!pending || !['order','standby'].includes(phase);
+    const variants = product.variants.filter(isAvailable);
+    const min = variants.length ? variants.reduce((a, b) => BigInt(a.price) <= BigInt(b.price) ? a : b) : null;
     const art = make('span', 'touch-product-art');
     const fallback = make('span', 'touch-product-fallback', 'IUTRA'); art.append(fallback);
     if (typeof product.imageUrl === 'string' && (/^https:\/\//i.test(product.imageUrl) || /^\/catalog-images\/[a-f0-9]{64}\.(?:jpg|png|webp|gif)$/.test(product.imageUrl))) {
@@ -115,34 +134,36 @@ function renderMenu() {
         }
       } catch { /* Keep the fallback for invalid image URLs. */ }
     }
-    button.append(art, make('strong', '', product.nameZh), make('span', '', product.nameVi), make('b', '', `${money(min.price)} 起`));
+    button.append(art, make('strong', '', product.nameZh), make('span', '', product.nameVi), make('b', '', productAvailable(product) ? `${money(min.price)} 起` : '售罄／暫停供應'));
     button.addEventListener('click', () => openProduct(product)); return button;
   });
   element('touch-products').replaceChildren(...(products.length ? products : [make('p', '', '此分類目前沒有商品。')]));
   touchStatus(pending ? (pending.uncertain ? '加入狀態待確認，請洽店員確認後重新開啟顧客畫面。' : '正在加入點餐，請稍候。') : '');
 }
 function openProduct(product) {
-  if (pending || phase === 'calculating' || phase === 'unavailable' || mode !== 'touch' || !lastSnapshot || Date.now() - lastSnapshot >= DISPLAY_TIMEOUT) return;
+  if (!productAvailable(product) || pending || !['order','standby'].includes(phase) || mode !== 'touch' || !lastSnapshot || Date.now() - lastSnapshot >= DISPLAY_TIMEOUT) return;
   selectedProduct = product;
   element('touch-title').textContent = product.nameZh; element('touch-subtitle').textContent = product.nameVi;
   element('touch-note').value = ''; element('touch-error').textContent = '';
   const fields = element('touch-fields'); fields.replaceChildren();
   const variants = make('fieldset'); variants.append(make('legend', '', '選擇容量'));
-  product.variants.forEach((variant, index) => {
-    const label = make('label', 'touch-choice'); const input = make('input'); input.type = 'radio'; input.name = 'touch-variant'; input.value = variant.id; input.checked = index === 0;
-    label.append(input, make('span', '', `${variant.label}　${money(variant.price)}`)); variants.append(label);
+  const defaultVariant = product.variants.find(isAvailable)?.id;
+  product.variants.forEach(variant => {
+    if (!isActive(variant)) return;
+    const label = make('label', 'touch-choice'); const input = make('input'); input.type = 'radio'; input.name = 'touch-variant'; input.value = variant.id; input.checked = variant.id === defaultVariant; input.disabled = !isAvailable(variant);
+    label.append(input, make('span', '', `${variant.label}　${money(variant.price)}${isAvailable(variant) ? '' : '（售罄）'}`)); variants.append(label);
   }); fields.append(variants);
   (product.optionGroups || []).forEach((group, index) => {
-    const field = make('fieldset'); field.append(make('legend', '', `${group.nameZh}：選 ${group.minSelect} 至 ${group.maxSelect} 項`));
-    if (group.maxSelect === 1 && group.minSelect === 0) {
+    const field = make('fieldset'); field.append(make('legend', '', `${group.nameZh}：選 ${group.minSelect} 至 ${optionMaxSelect(group)} 項`));
+    if (optionMaxSelect(group) === 1 && group.minSelect === 0) {
       const label = make('label', 'touch-choice'); const input = make('input'); input.type = 'radio'; input.name = `touch-group-${index}`; input.value = ''; input.checked = !(group.defaultValueIds || []).length;
       label.append(input, make('span', '', '不選')); field.append(label);
     }
     group.values.forEach(value => {
-      const label = make('label', 'touch-choice'); const input = make('input'); input.type = group.maxSelect === 1 ? 'radio' : 'checkbox'; input.name = `touch-group-${index}`; input.value = value.id; input.checked = (group.defaultValueIds || []).includes(value.id); input.disabled = group.maxSelect === 0;
+      const label = make('label', 'touch-choice'); const input = make('input'); input.type = optionMaxSelect(group) === 1 ? 'radio' : 'checkbox'; input.name = `touch-group-${index}`; input.value = value.id; input.checked = (group.defaultValueIds || []).includes(value.id); input.disabled = optionMaxSelect(group) === 0;
       input.addEventListener('change', () => {
         const checked = [...field.querySelectorAll('input')].filter(control => control.checked && control.value);
-        if (checked.length > group.maxSelect) { input.checked = false; element('touch-error').textContent = `「${group.nameZh}」最多選 ${group.maxSelect} 項。`; }
+        if (checked.length > optionMaxSelect(group)) { input.checked = false; element('touch-error').textContent = `「${group.nameZh}」最多選 ${optionMaxSelect(group)} 項。`; }
         else element('touch-error').textContent = '';
       });
       label.append(input, make('span', '', `${value.nameZh} ${value.nameVi}`)); field.append(label);
@@ -151,8 +172,9 @@ function openProduct(product) {
   if (product.toppings.length) {
     const field = make('fieldset'); field.append(make('legend', '', '加點配料（每杯份數）'));
     product.toppings.forEach((topping, index) => {
-      const label = make('label', 'touch-number'); label.append(make('span', '', `${topping.nameZh} ${topping.nameVi} · ${money(topping.price)} / ${topping.unit}（最多 ${topping.maxPortions}）`));
-      const input = make('input'); input.type = 'number'; input.name = `touch-topping-${index}`; input.min = '0'; input.max = String(topping.maxPortions); input.step = '1'; input.value = '0'; input.inputMode = 'numeric'; label.append(input); field.append(label);
+      if (!isActive(topping)) return;
+      const label = make('label', 'touch-number'); label.append(make('span', '', `${topping.nameZh} ${topping.nameVi}${isAvailable(topping) ? '' : '（售罄）'} · ${money(topping.price)} / ${topping.unit}（最多 ${topping.maxPortions}）`));
+      const input = make('input'); input.type = 'number'; input.name = `touch-topping-${index}`; input.disabled = !isAvailable(topping); input.min = '0'; input.max = String(topping.maxPortions); input.step = '1'; input.value = '0'; input.inputMode = 'numeric'; label.append(input); field.append(label);
     }); fields.append(field);
   }
   const quantity = make('label', 'touch-number touch-quantity'); quantity.append(make('span', '', '杯數'));
@@ -162,23 +184,25 @@ function openProduct(product) {
 element('touch-close').addEventListener('click', () => element('touch-dialog').close());
 element('touch-form').addEventListener('submit', event => {
   event.preventDefault();
-  if (pending || phase === 'calculating' || phase === 'unavailable' || mode !== 'touch' || !session || !lastSnapshot || Date.now() - lastSnapshot >= DISPLAY_TIMEOUT || !selectedProduct || !catalog?.products.includes(selectedProduct)) return;
+  if (pending || !['order','standby'].includes(phase) || mode !== 'touch' || !session || !lastSnapshot || Date.now() - lastSnapshot >= DISPLAY_TIMEOUT || !selectedProduct || !catalog?.products.includes(selectedProduct)) return;
   const form = element('touch-form'), product = selectedProduct;
   const variant = form.querySelector('input[name="touch-variant"]:checked');
   const quantity = Number(form.querySelector('input[name="touch-quantity"]').value);
   const error = message => { element('touch-error').textContent = message; };
-  if (!variant || !product.variants.some(v => v.id === variant.value) || !Number.isInteger(quantity) || quantity < 1 || quantity > 100) return error('請選擇容量與 1 至 100 杯。');
+  if (!productAvailable(product) || !variant || !product.variants.some(v => v.id === variant.value && isAvailable(v)) || !Number.isInteger(quantity) || quantity < 1 || quantity > 100) return error('請選擇容量與 1 至 100 杯。');
   const options = [];
   for (const [index, group] of (product.optionGroups || []).entries()) {
     const valueIds = [...form.querySelectorAll(`input[name="touch-group-${index}"]:checked`)].map(input => input.value).filter(Boolean);
-    if (valueIds.length < group.minSelect || valueIds.length > group.maxSelect) return error(`「${group.nameZh}」請選擇 ${group.minSelect} 至 ${group.maxSelect} 項。`);
+    if (valueIds.length < group.minSelect || valueIds.length > optionMaxSelect(group)) return error(`「${group.nameZh}」請選擇 ${group.minSelect} 至 ${optionMaxSelect(group)} 項。`);
     if (valueIds.length) options.push({ groupId: group.id, valueIds });
   }
   const toppings = [];
   for (const [index, topping] of product.toppings.entries()) {
+    if (!isActive(topping)) continue;
     const raw = form.querySelector(`input[name="touch-topping-${index}"]`).value;
     const portions = Number(raw);
     if (raw === '' || !Number.isInteger(portions) || portions < 0 || portions > topping.maxPortions) return error(`「${topping.nameZh}」份數須為 0 至 ${topping.maxPortions}。`);
+    if (portions && !isAvailable(topping)) return error('配料已停用或售罄');
     if (portions) toppings.push({ id: topping.id, portions });
   }
   let customerNote;
@@ -209,12 +233,13 @@ if (channel) channel.onmessage = ({ data }) => {
   if (!data || typeof data !== 'object' || data.type !== 'snapshot' || data.pair !== pair ||
       data.nonce !== nonce || !isDisplayId(data.session) || data.session !== pair ||
       !Number.isSafeInteger(data.revision) || data.revision < 0 ||
-      !['standby', 'calculating', 'unavailable', 'order'].includes(data.phase) ||
+      !['standby', 'calculating', 'unavailable', 'order', 'confirm', 'payment', 'completed', 'exception'].includes(data.phase) ||
       (data.mode !== undefined && !['view', 'touch'].includes(data.mode)) ||
       (data.mode === 'touch' && (data.catalog !== undefined
         ? !validCatalog(data.catalog) || data.catalogRelease !== data.catalog.release
         : !catalog || data.catalogRelease !== catalog.release)) ||
-      (data.phase === 'order' && !validOrder(data))) return;
+      (['order','confirm','payment'].includes(data.phase) && !validOrder(data)) ||
+      (data.phase === 'payment' && !['cash','bank','wallet'].includes(data.method))) return;
   if (lastSnapshot && Date.now() - lastSnapshot >= DISPLAY_TIMEOUT) { reconnect(); return; }
   if (session && (data.session !== session || data.revision < revision)) return;
   const changed = data.session !== session || data.revision !== revision;
@@ -227,6 +252,7 @@ if (channel) channel.onmessage = ({ data }) => {
   acknowledge();
 };
 setInterval(() => {
+  if (paymentExpiresAt && Date.now() >= paymentExpiresAt) { paymentExpiresAt = 0; element('payment-info').replaceChildren(make('p','','付款碼已到期，請洽店員核對；請勿重複付款')); }
   if (pending && !pending.uncertain && Date.now() - pending.started >= operationTimeout) { pending.uncertain = true; renderMenu(); }
   if (lastSnapshot && Date.now() - lastSnapshot >= DISPLAY_TIMEOUT) reconnect();
   else requestSnapshot();

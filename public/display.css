@@ -16,6 +16,8 @@ h1 { font-size: clamp(24px, 2.2vw, 30px); margin: 0 0 10px; }
 .item-detail { margin: 6px 0 0; font-size: 15px; color: #5b6b5e; line-height: 1.6; overflow-wrap: anywhere; }
 .item-prices { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-top: 8px; font-size: 15px; color: #496252; }
 .item-prices strong { color: #244d39; }
+#payment-info { overflow-wrap: anywhere; }
+.payment-qr { display: block; width: min(100%, 360px); height: auto; margin: 20px auto; background: #fff; }
 #amount { margin-top: 24px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 16px; font-size: 16px; }
 #amount[hidden] { display: none; }
 #total { color: #244d39; font-size: clamp(26px, 3vw, 36px); }

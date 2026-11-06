@@ -14,8 +14,9 @@
   <section class="access-panel" aria-labelledby="access-title"><div><h2 id="access-title">員工登入</h2><p>使用有商品管理權限的員工帳號。登入狀態僅保留在目前頁面。</p><p id="signed-in" hidden></p></div><form id="access-form"><label for="login-name">帳號</label><input id="login-name" type="text" autocomplete="username" required><label for="password">密碼</label><input id="password" type="password" autocomplete="current-password" required><div class="access-controls"><button id="login-submit" class="primary" type="submit">登入並載入草稿</button><button id="logout" class="secondary" type="button" hidden>登出</button></div></form></section>
   <p id="message" class="message" role="status" aria-live="polite"></p>
   <div id="editor" hidden>
+    <section class="editor-section"><div class="editor-header"><div><h2>共用選項群組</h2><p>建立範本後由分類套用；糖與冰必須明確指定類型，名稱不會自動判斷。</p></div><button class="secondary" type="button" data-action="add-template">新增共用群組</button></div><p class="empty-hint">分類依勾選順序繼承群組，單品可排除或以同 ID 整組覆寫；不能同時排除與覆寫。單品新增群組排在繼承群組之後。移除單品覆寫後恢復繼承；發布時會驗證並保存每個商品的有效選項，之後修改範本不影響舊版本。預設可只填部分，點餐時仍須滿足最少選擇數。</p><div id="template-list"></div></section>
     <section class="editor-section"><div class="editor-header"><div><h2>分類</h2><p>為商品建立中越文分類。</p></div><button class="secondary" type="button" data-action="add-category">新增分類</button></div><div id="category-list"></div></section>
-    <section class="editor-section"><div class="editor-header"><div><h2>商品</h2><p>每個容量設定完整售價；配料價格按每杯份數計算。</p></div><button class="secondary" type="button" data-action="add-product">新增商品</button></div><div id="product-list"></div></section>
+    <section class="editor-section"><div class="editor-header"><div><h2>商品</h2><p>每個規格設定完整售價；配料價格按每杯份數計算。停用項目在點餐隱藏，售罄項目顯示但無法選購。</p></div><button class="secondary" type="button" data-action="add-product">新增商品</button></div><div id="product-list"></div></section>
     <div class="save-bar"><span id="dirty-status">草稿已載入</span><div><button class="secondary" type="button" id="save">儲存草稿</button><button class="primary" type="button" id="publish">發布菜單</button></div></div>
   </div>
 </main>

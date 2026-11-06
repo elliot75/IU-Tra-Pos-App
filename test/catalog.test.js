@@ -138,3 +138,30 @@ test('資料庫錯誤與缺少初始化列不洩漏連線資訊', async () => {
   const empty = new CatalogStore({ async query() { return { rows: [] }; } });
   await assert.rejects(empty.getPublished(), error => error.status === 503);
 });
+
+
+test('發布原子保存分類展開快照，後續範本修改不改舊版本，錯誤關係拒絕儲存', async () => {
+  const pool = fakePool(), store = new CatalogStore(pool), data = example();
+  const group = { id: 'shared', kind: 'ice', nameZh: '冰量', nameVi: 'Đá', minSelect: 1, maxSelect: 1,
+    values: [{ id: 'less', nameZh: '少冰', nameVi: 'Ít đá' }], defaultValueIds: ['less'] };
+  data.optionGroups = [group]; data.categories[0].optionGroupIds = ['shared']; delete data.products[0].optionGroups;
+  await store.update(0, data);
+  const first = await store.publish(1);
+  assert.deepEqual(first.products[0].optionGroups, [group]);
+  assert.equal('optionGroups' in first, false); assert.equal('optionGroupIds' in first.categories[0], false);
+  assert.equal((await store.getDraft()).catalog.optionGroups[0].id, 'shared', '草稿保留範本');
+  const input = { menuRelease: first.release, items: [{ productId: 'oolong', variantId: 'oolong-700', quantity: 1, toppings: [] }] };
+  const { quoteOrder } = await import('../src/pricing.js');
+  assert.throws(() => quoteOrder(input, first), /選項數量/);
+  input.items[0].options = [{ groupId: 'shared', valueIds: ['less'] }];
+  assert.equal(quoteOrder(input, first).total, '24000');
+  group.nameZh = '更新冰量'; data.products[0].soldOut = true;
+  await store.update(1, data); const second = await store.publish(2);
+  assert.equal(second.products[0].optionGroups[0].nameZh, '更新冰量');
+  assert.equal(pool.releases.get(first.release).products[0].optionGroups[0].nameZh, '冰量');
+  assert.throws(() => quoteOrder({ ...input, menuRelease: second.release }, second), /停用或售罄/);
+  assert.equal(quoteOrder(input, first).total, '24000', '已保存版本可供舊快照驗證');
+  const invalid = structuredClone(data); invalid.products[0].excludedOptionGroupIds = ['unknown'];
+  await assert.rejects(store.update(2, invalid));
+  assert.equal((await store.getDraft()).revision, 2);
+});

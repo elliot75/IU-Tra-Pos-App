@@ -48,7 +48,8 @@ function bus() {
   };
 }
 
-function setup({ hash = '', transport } = {}) {
+function setup({ hash = '', transport, storage = new Map() } = {}) {
+  const sessionStorage={getItem:key=>storage.get(key) ?? null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)};
   const elements = new Map();
   let mutations = 0;
   function node() {
@@ -74,14 +75,14 @@ function setup({ hash = '', transport } = {}) {
   }
   const document = { querySelector: get, getElementById: get, createElement: node, addEventListener(type, fn) { listeners[type] = fn; }, hidden: false };
   const context = vm.createContext({
-    document, location: { hash }, BroadcastChannel: Channel, displayProtocol: protocol,
-    Date: { now: () => now }, setInterval: (fn, delay) => { assert.equal(delay, DISPLAY_HEARTBEAT); timers.push(fn); },
+    document, location: { hash }, BroadcastChannel: Channel, displayProtocol: protocol, sessionStorage, window: { open:()=>({}) },
+    Date: { now: () => now, parse: Date.parse }, setInterval: (fn, delay) => { assert.equal(delay, DISPLAY_HEARTBEAT); timers.push(fn); },
     setTimeout(fn, delay) { const id = ++timerId; deadlines.set(id, { fn, at: now + delay }); return id; },
     clearTimeout(id) { deadlines.delete(id); }, AbortController, URL,
     Intl, BigInt, console,
     fetch: async () => ({ ok: false, status: 404, json: async () => ({ error: {} }) })
   });
-  return { context, get, timers, channels, listeners, mutations: () => mutations, advance(ms) {
+  return { context, get, timers, channels, listeners, sessionStorage, storage, mutations: () => mutations, advance(ms) {
     now += ms;
     for (const [id, deadline] of deadlines) if (deadline.at <= now) { deadlines.delete(id); deadline.fn(); }
   } };
@@ -125,6 +126,48 @@ test('共用協定嚴格驗證 ID 與 fragment，兩頁載入 module', async () 
   const html = await readFile(new URL('index.html', root), 'utf8');
   assert.match(html, /id="open-display"/);
   for (const file of ['index.html', 'display.html']) assert.match(await readFile(new URL(file, root), 'utf8'), /<script type="module"/);
+});
+
+test('結帳鎖定、原識別恢復及遲到完成訊息不得清除另一單',async()=>{
+  const env=await touchMain();
+  const fill=async()=>{env.context.testing.state.catalog={...structuredClone(catalog),isExample:false};env.context.testing.state.items=[{quantity:1}];env.context.fetch=async()=>({ok:true,json:async()=>({data:quote('22000')})});await env.context.testing.renderOrder();};
+  await fill();
+  env.get('#checkout').listeners.click();
+  const saved=JSON.parse(env.sessionStorage.getItem('iutra.pos.checkout'));
+  assert.match(saved.clientOrderId,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-8[a-f0-9]{3}-[a-f0-9]{12}$/);
+  assert.equal(env.get('#products').inert,true);assert.equal(env.get('#checkout').disabled,true);
+  env.channel.onmessage({data:customerAction(env)});await tick();
+  assert.equal(env.context.testing.state.items.length,1);
+  const channel=env.channels.find(c=>c.name==='iutra-pos-checkout'),orderId=randomUUID();
+  const complete={type:'checkout',pair:saved.displayPair,clientOrderId:saved.clientOrderId,orderId,phase:'completed'};
+  channel.onmessage({data:{...complete,clientOrderId:randomUUID()}});assert.equal(env.context.testing.state.items.length,1);
+  const refreshed=setup({storage:env.storage});
+  await load(refreshed,'app.js','globalThis.testing={state,renderOrder};');
+  refreshed.context.testing.state.catalog={...structuredClone(catalog),isExample:false};
+  refreshed.context.testing.state.items=[{quantity:1}];
+  const recoveryChannel=refreshed.channels.find(c=>c.name==='iutra-pos-checkout');
+  assert.ok(recoveryChannel.sent.some(message=>message.type==='checkout-request' && message.clientOrderId===saved.clientOrderId));
+  refreshed.timers.forEach(fn=>fn());
+  assert.ok(recoveryChannel.sent.filter(message=>message.type==='checkout-request').length>=2,'retry recovery until terminal state arrives');
+  recoveryChannel.onmessage({data:complete});
+  assert.ok(recoveryChannel.sent.some(message=>message.type==='checkout-ack' && message.orderId===orderId));
+  assert.equal(refreshed.context.testing.state.items.length,0);assert.equal(refreshed.sessionStorage.getItem('iutra.pos.checkout'),null);
+  channel.onmessage({data:complete});assert.equal(env.context.testing.state.items.length,0);
+  await fill();env.get('#checkout').listeners.click();
+  channel.onmessage({data:complete});assert.equal(env.context.testing.state.items.length,1,'the previous completed order cannot clear a new checkout');
+});
+
+test('銀行 QR 僅在有效期顯示，到期撤碼且不開放觸控加單', async () => {
+  const env=await display(randomUUID()),channel=env.channels[0];
+  const snapshot=orderFor(env,{phase:'payment',method:'bank',expiresAt:new Date(11000).toISOString(),bankSnapshot:{accountName:'TEST STORE',bankCode:'970436',accountNumber:'1234567890'},qrDataUrl:'data:image/png;base64,AAAA',mode:'touch',catalogRelease:catalog.release,catalog});
+  channel.onmessage({data:snapshot});
+  assert.ok(env.get('payment-info').children.some(n=>n.src===snapshot.qrDataUrl));
+  assert.equal(env.get('touch-menu').hidden,true);
+  env.advance(1000);env.timers[0]();
+  assert.ok(!env.get('payment-info').children.some(n=>n.src));
+  assert.match(env.get('payment-info').children[0].textContent,/已到期/);
+  channel.onmessage({data:{...snapshot,revision:snapshot.revision+1}});
+  assert.ok(!env.get('payment-info').children.some(n=>n.src),'late snapshots cannot restore an expired QR');
 });
 
 test('無配對或無效配對客顯維持待機，不探索主畫面', async () => {
@@ -507,4 +550,43 @@ test('觸控客顯與伺服器共用菜單限制，拒絕無效完整菜單與�
   assert.equal(channel.sent.length, ackCount);
   channel.onmessage({ data: { ...snapshot, revision: 3, catalog: undefined } });
   assert.equal(channel.sent.at(-1).revision, 3);
+});
+
+
+test('觸控客顯隱藏停用商品規格配料、保留售罄禁用提示並防繞過控制', async () => {
+  const env = await display(randomUUID()), channel = env.channels[0], menu = structuredClone(catalog);
+  const product = menu.products[0]; product.optionGroups = [];
+  product.variants.unshift({ id: 'inactive', label: '停用規格', price: '1', active: false });
+  product.variants[1].soldOut = true;
+  product.toppings.push({ ...product.toppings[0], id: 'hidden-topping', active: false });
+  product.toppings[0].soldOut = true;
+  menu.products.push({ ...structuredClone(product), id: 'hidden', nameZh: '隱藏商品', active: false, variants: [{ id: 'hidden-v', label: '大', price: '1' }] });
+  menu.products.push({ ...structuredClone(product), id: 'sold', nameZh: '售罄商品', soldOut: true, variants: [{ id: 'sold-v', label: '大', price: '1' }] });
+  menu.products.push({ ...structuredClone(product), id: 'no-variants', nameZh: '無規格商品', variants: [{ id: 'no-v', label: '大', price: '1', active: false }] });
+  const snapshot = orderFor(env, { phase: 'standby', mode: 'touch', catalog: menu, catalogRelease: menu.release });
+  channel.onmessage({ data: snapshot });
+  const buttons = env.get('touch-products').children;
+  assert.equal(buttons.length, 3);
+  assert.equal(buttons[0].children.at(-1).textContent, '24.000 ₫ 起');
+  for (const button of buttons.slice(1)) {
+    assert.equal(button.disabled, true);
+    assert.match(button.children.at(-1).textContent, /售罄/);
+    button.listeners.click(); assert.equal(env.get('touch-dialog').open, false);
+  }
+  buttons[0].listeners.click();
+  const fields = env.get('touch-fields').children;
+  const variants = fields[0].children.slice(1);
+  assert.equal(variants.length, 2);
+  assert.equal(variants[0].children[0].disabled, true); assert.equal(variants[0].children[0].checked, false);
+  assert.equal(variants[1].children[0].checked, true);
+  const toppings = fields[1].children.slice(1);
+  assert.equal(toppings.length, 1); assert.equal(toppings[0].children[1].disabled, true);
+  const form = env.get('touch-form');
+  form.querySelector = selector => ({ value: selector.includes('touch-variant') ? 'oolong-500' : '1' });
+  const sent = channel.sent.length;
+  form.listeners.submit({ preventDefault() {} });
+  assert.equal(channel.sent.length, sent); assert.match(env.get('touch-error').textContent, /容量/);
+  form.querySelector = selector => ({ value: selector.includes('touch-variant') ? 'oolong-700' : '1' });
+  form.listeners.submit({ preventDefault() {} });
+  assert.equal(channel.sent.length, sent); assert.match(env.get('touch-error').textContent, /售罄/);
 });

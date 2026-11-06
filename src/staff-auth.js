@@ -25,7 +25,7 @@ export async function hashStaffPassword(password) {
   const hash = await scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 });
   return `scrypt-v1$${salt.toString('hex')}$${hash.toString('hex')}`;
 }
-async function verifyPassword(password, stored, deriveKey) {
+export async function verifyStaffPassword(password, stored, deriveKey = scrypt) {
   if (typeof stored !== 'string' || !/^scrypt-v1\$[0-9a-f]{32}\$[0-9a-f]{128}$/.test(stored)) throw new Error('Invalid stored password hash');
   const [, salt, hash] = stored.split('$');
   const derived = await deriveKey(password, Buffer.from(salt, 'hex'), 64, { N: 16384, r: 8, p: 1 });
@@ -48,7 +48,7 @@ export function createStaffAuth(pool, { scrypt: deriveKey = scrypt } = {}) {
         await client.query('BEGIN');
         const found = await client.query('SELECT id, login_name, display_name, can_manage_catalog, password_hash, active, (locked_until > clock_timestamp()) AS locked FROM iutra_pos.staff_users WHERE login_name = $1 FOR UPDATE', [loginName]);
         const row = found.rows[0];
-        const passwordMatches = await verifyPassword(password, row?.active ? row.password_hash : DUMMY_PASSWORD_HASH, deriveKey);
+        const passwordMatches = await verifyStaffPassword(password, row?.active ? row.password_hash : DUMMY_PASSWORD_HASH, deriveKey);
         if (!row || !row.active || row.locked) result = { error: invalid() };
         else if (!passwordMatches) {
           await client.query("UPDATE iutra_pos.staff_users SET failed_attempts = CASE WHEN locked_until IS NOT NULL AND locked_until <= clock_timestamp() THEN 1 ELSE failed_attempts + 1 END, locked_until = CASE WHEN (CASE WHEN locked_until IS NOT NULL AND locked_until <= clock_timestamp() THEN 1 ELSE failed_attempts + 1 END) >= 5 THEN clock_timestamp() + interval '15 minutes' ELSE NULL END WHERE id = $1 RETURNING (locked_until IS NOT NULL) AS locked", [row.id]);

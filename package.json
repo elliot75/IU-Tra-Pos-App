@@ -8,6 +8,14 @@
     "start": "node --env-file-if-exists=.env src/server.js",
     "test": "node --test"
   },
-  "engines": { "node": ">=22" },
-  "dependencies": { "pg": "^8.16.3" }
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15"
+  }
 }

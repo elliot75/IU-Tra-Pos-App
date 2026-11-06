@@ -1,4 +1,5 @@
 import { catalog } from './catalog.js';
+import { isAvailable, optionMaxSelect } from '../public/catalog-validation.js';
 
 import { ValidationError, normalizeNote } from '../public/validation.js';
 export { ValidationError } from '../public/validation.js';
@@ -18,6 +19,7 @@ export function quoteOrder(input, selectedCatalog = catalog) {
     const product = selectedCatalog.products.find(p => p.id === item.productId);
     const variant = product?.variants.find(v => v.id === item.variantId);
     if (!product || !variant) fail('商品或容量不存在');
+    if (!isAvailable(product) || !isAvailable(variant)) fail('商品或規格已停用或售罄');
     if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 100) fail('杯數須為 1 至 100 的整數');
     if (!Array.isArray(item.toppings) || item.toppings.length > product.toppings.length) fail('配料格式不正確');
     const seen = new Set();
@@ -26,6 +28,7 @@ export function quoteOrder(input, selectedCatalog = catalog) {
       if (!selection || typeof selection !== 'object' || Array.isArray(selection)) fail('配料格式不正確');
       const topping = product.toppings.find(t => t.id === selection.id);
       if (!topping || seen.has(selection.id)) fail('配料不存在或重複');
+      if (!isAvailable(topping)) fail('配料已停用或售罄');
       seen.add(selection.id);
       if (!Number.isInteger(selection.portions) || selection.portions < 1 || selection.portions > topping.maxPortions) fail('配料份數超出範圍');
       unitPrice += BigInt(topping.price) * BigInt(selection.portions);
@@ -39,7 +42,7 @@ export function quoteOrder(input, selectedCatalog = catalog) {
       if (!selection || typeof selection !== 'object' || Array.isArray(selection)) fail('選項格式不正確');
       const group = groups.find(g => g.id === selection.groupId);
       if (!group || selectedGroups.has(selection.groupId)) fail('選項群組不存在或重複');
-      if (!Array.isArray(selection.valueIds) || selection.valueIds.length > group.maxSelect) fail('選項數量不正確');
+      if (!Array.isArray(selection.valueIds) || selection.valueIds.length > optionMaxSelect(group)) fail('選項數量不正確');
       const seenValues = new Set();
       const values = selection.valueIds.map(valueId => {
         const value = group.values.find(v => v.id === valueId);
@@ -51,7 +54,7 @@ export function quoteOrder(input, selectedCatalog = catalog) {
     }
     for (const group of groups) {
       const count = selectedGroups.get(group.id)?.values.length ?? 0;
-      if (count < group.minSelect || count > group.maxSelect) fail('選項數量不正確');
+      if (count < group.minSelect || count > optionMaxSelect(group)) fail('選項數量不正確');
     }
     const options = [...selectedGroups.values()];
     const lineTotal = unitPrice * BigInt(item.quantity);

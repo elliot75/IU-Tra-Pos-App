@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { normalizeNote, quoteBody } from '../public/validation.js';
 import { quoteOrder } from '../src/pricing.js';
+import * as catalogValidation from '../public/catalog-validation.js';
 
 const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8'))
   .replace(/^import .*\n/gm, '')
@@ -19,7 +20,7 @@ test('點餐預選預設選項、支援舊菜單並送出實際選擇供伺服�
   };
   const context = vm.createContext({ document: { querySelector: get, querySelectorAll: () => [] },
     DISPLAY_CHANNEL: 'display', DISPLAY_TIMEOUT: 1000, DISPLAY_HEARTBEAT: 1000, displayId: () => 'session', isDisplayId: () => true,
-    normalizeNote, quoteBody, AbortController, setTimeout, clearTimeout,
+    normalizeNote, quoteBody, ...catalogValidation, AbortController, setTimeout, clearTimeout,
     setInterval() {}, fetch: async (path, options) => { calls.push({ path, options }); return { ok: true, json: async () => ({ data: { items: [], subtotal: '24000', total: '24000' } }) }; }
   });
   vm.runInContext(`${source}\nglobalThis.testing = { state, openProduct, showProducts, renderOrder };`, context);
@@ -116,7 +117,7 @@ test('店員可複製並獨立修改明細，過期編輯不會覆蓋新訂單',
   };
   const context = vm.createContext({ document: { querySelector: get, querySelectorAll: () => [] },
     DISPLAY_CHANNEL: 'display', DISPLAY_TIMEOUT: 1000, DISPLAY_HEARTBEAT: 1000, displayId: () => 'session', isDisplayId: () => true,
-    normalizeNote, quoteBody, AbortController, setTimeout, clearTimeout, setInterval() {},
+    normalizeNote, quoteBody, ...catalogValidation, AbortController, setTimeout, clearTimeout, setInterval() {},
     fetch: async (_path, options) => {
       const body = JSON.parse(options.body); requests.push(body);
       return { ok: true, json: async () => ({ data: { items: body.items.map(item => ({
@@ -186,21 +187,21 @@ function editingHarness() {
   };
   let channel;
   class Channel {
-    constructor() { channel = this; this.sent = []; }
+    constructor(name) { if (name === 'display') channel = this; this.sent = []; }
     postMessage(message) { this.sent.push(structuredClone(message)); }
   }
   const context = vm.createContext({
     document: { querySelector: get, querySelectorAll: () => [] }, BroadcastChannel: Channel,
     DISPLAY_CHANNEL: 'display', DISPLAY_TIMEOUT: 10000, DISPLAY_HEARTBEAT: 1000,
     displayId: () => 'session', isDisplayId: () => true,
-    normalizeNote, quoteBody, AbortController, setInterval() {},
+    normalizeNote, quoteBody, ...catalogValidation, AbortController, setInterval() {},
     setTimeout(fn) { const id = ++timerId; deadlines.set(id, fn); return id; },
     clearTimeout(id) { deadlines.delete(id); },
     fetch: (_path, options) => new Promise((resolve, reject) => {
       requests.push({ body: JSON.parse(options.body), signal: options.signal, resolve, reject });
     })
   });
-  vm.runInContext(`${source}\nglobalThis.testing = { state, openProduct, showQuote, addCustomerItem, displayRevision: () => displayRevision };`, context);
+  vm.runInContext(`${source}\nglobalThis.testing = { state, openProduct, showProducts, publicCatalog, showQuote, addCustomerItem, displayRevision: () => displayRevision };`, context);
   const { state, openProduct, showQuote } = context.testing;
   state.catalog = { release: 'release', categories: [], products: [{
     id: 'p', categoryId: 'tea', nameZh: '茶', nameVi: 'Trà',
@@ -309,4 +310,89 @@ test('修改試算期間顧客成功加單，晚到修改不得覆蓋訂單與�
   assert.equal(env.dialog.open, true);
   await env.submit();
   assert.equal(env.requests.length, 2, 'stale editor must require reopening');
+});
+
+test('店員搜尋中越文商品，與分類及輸入法組合', () => {
+  const elements = new Map();
+  const get = key => {
+    if (!elements.has(key)) elements.set(key, { value: '', dataset: {}, listeners: {}, classList: { toggle() {} },
+      addEventListener(type, handler) { this.listeners[type] = handler; }, showModal() {}, close() {},
+      querySelector: get, querySelectorAll: () => [] });
+    return elements.get(key);
+  };
+  const context = vm.createContext({ document: { querySelector: get, querySelectorAll: () => [] },
+    DISPLAY_CHANNEL: 'display', DISPLAY_TIMEOUT: 1000, DISPLAY_HEARTBEAT: 1000, displayId: () => 'session', isDisplayId: () => true,
+    normalizeNote, quoteBody, ...catalogValidation, AbortController, setTimeout, clearTimeout, setInterval() {} });
+  vm.runInContext(`${source}\nglobalThis.testing = { state, showCatalog };`, context);
+  const { state, showCatalog } = context.testing;
+  const product = (id, categoryId, nameZh, nameVi) => ({ id, categoryId, nameZh, nameVi,
+    variants: [{ id: `${id}-v`, label: '杯', price: '22000' }], toppings: [] });
+  const catalog = { release: 'r', categories: [{ id: 'tea', nameZh: '茶', nameVi: 'Trà' }, { id: 'milk', nameZh: '奶', nameVi: 'Sữa' }],
+    products: [product('oolong', 'tea', '烏龍茶', 'Trà Ô Long'), product('peach', 'tea', '蜜桃茶', 'Trà Đào'), product('milk', 'milk', '奶茶', 'Trà Sữa')] };
+  const search = get('#product-search');
+  const input = (value, isComposing = false) => { search.value = value; search.listeners.input({ isComposing }); };
+  const category = id => get('#categories').listeners.click({ target: { closest: () => ({ dataset: { category: id } }) } });
+  const markup = () => get('#products').innerHTML;
+  input('茶'); // Before the menu loads, typing must not replace the load/error message.
+  showCatalog(catalog);
+  assert.equal(search.disabled, false); assert.equal(search.value, '');
+  assert.match(markup(), /烏龍茶/); assert.match(markup(), /蜜桃茶/); assert.match(markup(), /奶茶/);
+  input('烏龍');
+  assert.match(markup(), /烏龍茶/); assert.doesNotMatch(markup(), /蜜桃茶|奶茶/);
+  input('  TRA DAO  ');
+  assert.match(markup(), /蜜桃茶/); assert.doesNotMatch(markup(), /烏龍茶|奶茶/);
+  input('trà');
+  assert.match(markup(), /烏龍茶/); assert.match(markup(), /蜜桃茶/); assert.match(markup(), /奶茶/);
+  category('milk');
+  assert.match(markup(), /奶茶/); assert.doesNotMatch(markup(), /烏龍茶|蜜桃茶/);
+  input('烏龍');
+  assert.match(markup(), /找不到符合條件/);
+  category('tea');
+  assert.match(markup(), /烏龍茶/); assert.doesNotMatch(markup(), /蜜桃茶|奶茶/);
+  input('');
+  assert.match(markup(), /烏龍茶/); assert.match(markup(), /蜜桃茶/); assert.doesNotMatch(markup(), /奶茶/);
+  input('奶', true);
+  assert.match(markup(), /烏龍茶/, 'do not replace results during IME composition');
+  search.listeners.compositionend();
+  assert.match(markup(), /找不到符合條件/);
+  category(undefined);
+  assert.match(markup(), /奶茶/); assert.doesNotMatch(markup(), /烏龍茶|蜜桃茶/);
+  showCatalog({ ...catalog, release: 'new' });
+  assert.equal(search.value, '');
+  assert.match(markup(), /烏龍茶/); assert.match(markup(), /奶茶/);
+  assert.equal(state.items.length, 0);
+});
+
+
+test('店員隱藏停用項目、顯示不可選售罄商品與選項，最低價忽略停售規格', () => {
+  const env = editingHarness(), product = env.state.catalog.products[0];
+  product.variants.unshift({ id: 'inactive', label: '停用規格', price: '1', active: false });
+  product.variants[1].soldOut = true;
+  product.toppings.push({ ...product.toppings[0], id: 'hidden', nameZh: '隱藏配料', active: false });
+  product.toppings[0].soldOut = true;
+  env.state.catalog.products.push({ ...product, id: 'hidden-product', nameZh: '隱藏商品', active: false });
+  env.state.catalog.products.push({ ...product, id: 'sold-product', nameZh: '售罄商品', soldOut: true });
+  env.state.catalog.products.push({ ...product, id: 'no-variant', nameZh: '無規格商品', variants: [{ ...product.variants[0] }] });
+  env.showProducts();
+  const markup = env.get('#products').innerHTML;
+  assert.doesNotMatch(markup, /隱藏商品/);
+  assert.match(markup, /data-product="sold-product" disabled/);
+  assert.match(markup, /data-product="no-variant" disabled/);
+  assert.match(markup, /24\.000 ₫ 起/); assert.doesNotMatch(markup, /22\.000/);
+  env.dialog.close(); env.openProduct('sold-product'); assert.equal(env.dialog.open, false);
+  env.openProduct('p');
+  assert.doesNotMatch(env.get('#variants').innerHTML, /停用規格/);
+  assert.match(env.get('#variants').innerHTML, /value="small"[^>]*disabled/);
+  assert.match(env.get('#variants').innerHTML, /value="large" checked/);
+  assert.doesNotMatch(env.get('#toppings').innerHTML, /隱藏配料/);
+  assert.match(env.get('#toppings').innerHTML, /售罄/);
+  assert.match(env.get('#toppings').innerHTML, /disabled data-topping-index="0"/);
+  env.get('#product-dialog').listeners.click({ target: { closest: () => ({ dataset: { toppingIndex: '0', change: '1' } }) } });
+  assert.equal(env.state.portions[0], 0);
+  const projected = env.publicCatalog();
+  assert.equal(projected.products[0].variants[0].active, false);
+  assert.equal(projected.products[0].toppings[0].soldOut, true);
+  assert.equal(projected.products[1].active, false);
+  assert.equal(projected.products[2].soldOut, true);
+  assert.equal('excludedOptionGroupIds' in projected.products[0], false);
 });

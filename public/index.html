@@ -10,12 +10,13 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">IU</span><span>IUTRA<small>門市點餐</small></span></div>
-    <div class="header-actions"><label class="display-mode">客顯模式 <select id="display-mode"><option value="view">僅顯示</option><option value="touch">顧客點餐</option></select></label><a id="open-display" href="/display" target="_blank" rel="noopener">開啟客顯</a><span id="display-status" role="status">客顯未連線</span><a href="/admin">商品管理</a><div class="top-status"><span class="status-dot"></span><span id="catalog-status">載入菜單中</span></div></div>
+    <div class="header-actions"><label class="display-mode">客顯模式 <select id="display-mode"><option value="view">僅顯示</option><option value="touch">顧客點餐</option></select></label><a id="open-display" href="/display" target="_blank" rel="noopener">開啟客顯</a><span id="display-status" role="status">客顯未連線</span><a href="/operations" target="_blank" rel="noopener">營運工作台</a><a href="/admin">商品管理</a><div class="top-status"><span class="status-dot"></span><span id="catalog-status">載入菜單中</span></div></div>
   </header>
   <div class="notice" id="notice">訂單目前不會儲存，也不能收款。</div>
   <main class="workspace">
     <section class="menu-area" aria-labelledby="menu-title">
       <div class="section-heading"><div><p class="kicker">選擇飲品</p><h1 id="menu-title">今天想喝什麼？</h1><p class="subtext">選擇品項，再設定容量與配料。</p></div><span class="menu-tag" id="menu-tag">菜單</span></div>
+      <label class="product-search" for="product-search">搜尋商品<input id="product-search" type="search" placeholder="輸入中文或越文名稱" autocomplete="off" disabled></label>
       <div class="categories" id="categories"></div>
       <div id="products" class="product-grid" aria-live="polite"><p>正在載入菜單⋯</p></div>
       <div class="menu-footer"><span class="leaf">✳</span><p>每一杯，從喜歡的味道開始。<br><small>Chọn món theo cách bạn thích.</small></p></div>
@@ -27,8 +28,9 @@
         <div class="amount-row"><span>商品小計</span><strong id="subtotal">0 ₫</strong></div>
         <div class="amount-row total"><span>應付金額</span><strong id="total">0 ₫</strong></div>
         <p id="order-error" class="error" role="alert"></p>
-        <button class="checkout" type="button" disabled>結帳功能開發中</button>
-        <p class="footer-note">此畫面僅供點餐與計價測試</p>
+        <button class="checkout" id="checkout" type="button" disabled>前往結帳</button>
+        <button id="resume-checkout" class="remove" type="button" hidden>重新開啟原結帳工作台</button>
+        <p class="footer-note">需於工作台登入、授權設備並開班；正式收款仍待驗收</p>
       </div>
     </aside>
   </main>

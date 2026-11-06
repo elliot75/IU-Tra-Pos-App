@@ -10,6 +10,9 @@ import { createStaffAuth, StaffAuthError } from './staff-auth.js';
 import { createAuthTransport, createLoginRateLimiter } from './auth-transport.js';
 import { OrderDraftStore } from './order-drafts.js';
 import { MAX_REQUEST_BYTES } from '../public/validation.js';
+import { OperationsStore } from './operations.js';
+import { bankQR } from './pos-utils.js';
+import QRCode from 'qrcode';
 
 const files = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -24,7 +27,10 @@ const files = new Map([
   ['/display.css', ['display.css', 'text/css; charset=utf-8']],
   ['/admin', ['admin.html', 'text/html; charset=utf-8']],
   ['/admin.js', ['admin.js', 'text/javascript; charset=utf-8']],
-  ['/admin.css', ['admin.css', 'text/css; charset=utf-8']]
+  ['/admin.css', ['admin.css', 'text/css; charset=utf-8']],
+  ['/operations', ['operations.html', 'text/html; charset=utf-8']],
+  ['/operations.js', ['operations.js', 'text/javascript; charset=utf-8']],
+  ['/operations.css', ['operations.css', 'text/css; charset=utf-8']]
 ]);
 function send(res, status, data, requestId) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-request-id': requestId });
@@ -48,7 +54,7 @@ function bearer(req) {
   if (!match) throw new StaffAuthError(401, 'UNAUTHENTICATED', '請先登入');
   return match[1];
 }
-export function createServer({ pool = null, staffAuth = createStaffAuth(pool), authTransport = createAuthTransport(), loginRateLimiter = createLoginRateLimiter(), orderDrafts = new OrderDraftStore(pool), enableOrderDrafts = process.env.ENABLE_EXPERIMENTAL_ORDER_DRAFTS === 'true' } = {}) {
+export function createServer({ pool = null, staffAuth = createStaffAuth(pool), authTransport = createAuthTransport(), loginRateLimiter = createLoginRateLimiter(), orderDrafts = new OrderDraftStore(pool), enableOrderDrafts = process.env.ENABLE_EXPERIMENTAL_ORDER_DRAFTS === 'true', operations = new OperationsStore(pool), enableOperations = process.env.ENABLE_POS_OPERATIONS === 'true' } = {}) {
   const store = new CatalogStore(pool);
   return http.createServer(async (req, res) => {
     const requestId = randomUUID();
@@ -57,7 +63,7 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
       if (req.method === 'GET' && files.has(path)) {
         const [name, type] = files.get(path);
         const content = await readFile(new URL(`../public/${name}`, import.meta.url));
-        res.writeHead(200, { 'content-type': type, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; img-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
+        res.writeHead(200, { 'content-type': type, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; img-src 'self' https: blob: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
         return res.end(content);
       }
       const image = /^\/catalog-images\/([a-f0-9]{64})\.(jpg|png|webp|gif)$/.exec(path);
@@ -74,7 +80,8 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
       }
       if (req.method === 'GET' && path === '/api/v1/auth/config') return send(res, 200, { request_id: requestId, data: { allowInsecureHttp: authTransport.allowsInsecureHttp(req) } }, requestId);
       const orderPath = path === '/api/v1/order-drafts' || path.startsWith('/api/v1/order-drafts/');
-      const authPath = orderPath || path === '/api/v1/sessions' || path === '/api/v1/sessions/current' || path === '/api/v1/me' || path === '/api/v1/admin' || path.startsWith('/api/v1/admin/');
+      const posPath = path === '/api/v1/pos' || path.startsWith('/api/v1/pos/');
+      const authPath = posPath || orderPath || path === '/api/v1/sessions' || path === '/api/v1/sessions/current' || path === '/api/v1/me' || path === '/api/v1/admin' || path.startsWith('/api/v1/admin/');
       if (authPath) authTransport.requireProtectedTransport(req);
       if (req.method === 'POST' && path === '/api/v1/sessions') {
         loginRateLimiter.check(authTransport.sourceIP(req));
@@ -85,6 +92,38 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
       if (req.method === 'DELETE' && path === '/api/v1/sessions/current') {
         await staffAuth.logout(bearer(req));
         return send(res, 200, { request_id: requestId, data: { loggedOut: true } }, requestId);
+      }
+      if (posPath) {
+        if (!enableOperations) throw new ServiceError(404, 'NOT_FOUND', '營運模組尚未啟用');
+        const user = await staffAuth.authenticate(bearer(req));
+        const auth = { user, deviceId: req.headers['x-pos-device'], deviceKey: req.headers['x-pos-key'] };
+        if (req.method === 'GET' && path === '/api/v1/pos/context') return send(res, 200, { request_id: requestId, data: await operations.context(auth) }, requestId);
+        const command = /^\/api\/v1\/pos\/commands\/([A-Za-z]+)$/.exec(path);
+        if (req.method === 'POST' && command) return send(res, 200, { request_id: requestId, data: await operations.execute(auth, req.headers['idempotency-key'], command[1], await body(req), requestId) }, requestId);
+        const original = /^\/api\/v1\/pos\/operations\/([^/]+)$/.exec(path);
+        if (req.method === 'GET' && original) return send(res, 200, { request_id: requestId, data: await operations.operation(auth, original[1]) }, requestId);
+        const report = /^\/api\/v1\/pos\/(reports|exports)\/([^/]+)$/.exec(path);
+        if (req.method === 'GET' && report) {
+          const result = await operations.report(auth, report[2], report[1] === 'exports');
+          if (report[1] === 'reports') return send(res, 200, { request_id: requestId, data: result }, requestId);
+          res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'cache-control': 'no-store', 'content-disposition': 'attachment; filename="shift-report.csv"', 'x-content-type-options': 'nosniff' });
+          return res.end(result);
+        }
+        const qr = /^\/api\/v1\/pos\/qr\/([^/]+)$/.exec(path);
+        if (req.method === 'GET' && qr) {
+          const payment = await operations.list(auth, 'paymentRequests', { id: qr[1] });
+          if (payment.method !== 'bank' || payment.status !== 'pending' || !payment.bank_snapshot || new Date(payment.expires_at) <= new Date()) throw new ServiceError(409, 'PAYMENT_STATE_CONFLICT', 'QR 已失效，請核對原付款請求');
+          const code = bankQR(payment.bank_snapshot, payment.amount, payment.id.replaceAll('-', '').slice(0, 20));
+          const png = await QRCode.toBuffer(code, { type: 'png', width: 420, errorCorrectionLevel: 'M', margin: 4, color: { dark: '#000000', light: '#ffffff' } });
+          res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+          return res.end(png);
+        }
+        const resource = /^\/api\/v1\/pos\/([A-Za-z]+)(?:\/([^/]+))?$/.exec(path);
+        if (req.method === 'GET' && resource) {
+          const params = new URL(req.url, 'http://localhost').searchParams;
+          return send(res, 200, { request_id: requestId, data: await operations.list(auth, resource[1], { id: resource[2] || null, limit: params.has('limit') ? Number(params.get('limit')) : 50, before: params.get('before'), query: params.get('query') || '' }) }, requestId);
+        }
+        throw new ServiceError(404, 'NOT_FOUND', '找不到營運資源');
       }
       if (path === '/api/v1/admin' || path.startsWith('/api/v1/admin/')) {
         const user = await staffAuth.authenticate(bearer(req));

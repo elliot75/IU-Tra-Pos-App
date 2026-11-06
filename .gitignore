@@ -6,5 +6,9 @@ node_modules/
 coverage/
 # Private source-system exports and database inspection reports
 private/posapp-audit/
+# Local operational configuration, credentials and encrypted/staged backups
+private/pos-config*.json
+private/backups/
+*.iutrabak
 # Imported shop images are local business data
 public/catalog-images/

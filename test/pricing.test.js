@@ -78,3 +78,36 @@ test('拒絕錯誤版本、規格、配料及份數', () => {
   assert.throws(() => quote([item('oolong-500', [], 1.5)]));
   assert.throws(() => quote([]));
 });
+
+
+test('停用或售罄商品、規格與配料無法繞過介面，舊欄位預設可售', () => {
+  for (const path of [x => x.products[0], x => x.products[0].variants[1], x => x.products[0].toppings[0]]) {
+    for (const status of [{ active: false }, { soldOut: true }, { active: false, soldOut: true }]) {
+      const menu = structuredClone(catalog); Object.assign(path(menu), status);
+      const input = { menuRelease: menu.release, items: [{ ...item('oolong-700', [{ id: 'example-topping', portions: 1 }]), active: true, soldOut: false }] };
+      assert.throws(() => quoteOrder(input, menu), /停用或售罄/);
+    }
+  }
+  const menu = structuredClone(catalog);
+  menu.products[0].variants[0].soldOut = true;
+  menu.products[0].toppings[0].active = false;
+  const result = quoteOrder({ menuRelease: menu.release, items: [item()] }, menu);
+  assert.equal(result.total, '24000', '未選擇的售罄規格或停用配料不阻擋其他可售商品');
+  assert.equal(quote([item()]).total, '24000');
+});
+
+test('糖冰 kind 即使錯誤菜單放寬 maxSelect 仍強制單選，改名稱不影響規則', () => {
+  for (const kind of ['sugar', 'ice']) {
+    const menu = structuredClone(catalog);
+    menu.products[0].optionGroups = [{ id: 'arbitrary', kind, nameZh: '任意改名', nameVi: 'Renamed', minSelect: 0, maxSelect: 2, values: [
+      { id: 'a', nameZh: '甲', nameVi: 'A' }, { id: 'b', nameZh: '乙', nameVi: 'B' }
+    ] }];
+    const make = valueIds => quoteOrder({ menuRelease: menu.release, items: [{ ...item(), options: [{ groupId: 'arbitrary', valueIds }] }] }, menu);
+    assert.throws(() => make(['a', 'b']));
+    assert.equal(make(['a']).total, '24000');
+    menu.products[0].optionGroups[0].kind = 'general'; menu.products[0].optionGroups[0].nameZh = '冰量';
+    assert.equal(make(['a', 'b']).total, '24000', '名稱不推斷糖冰規則');
+    delete menu.products[0].optionGroups[0].kind;
+    assert.equal(make(['a', 'b']).total, '24000', '舊群組視為 general');
+  }
+});

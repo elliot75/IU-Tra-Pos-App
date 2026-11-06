@@ -1,6 +1,7 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "iutra-pos", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3000 }
+    { "name": "iutra-pos", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3000 },
+    { "name": "iutra-pos-isolated-demo", "runtimeExecutable": "node", "runtimeArgs": ["scripts/dev-operations-demo.js"], "port": 3001 }
   ]
 }

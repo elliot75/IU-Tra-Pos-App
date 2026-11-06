@@ -16,7 +16,7 @@ function setup(secure = true) {
   const calls = []; const pending = [];
   const context = vm.createContext({
     document: { querySelector: get, querySelectorAll: () => ['#login-name', '#password', '#login-submit', '#logout'].map(get) },
-    window: { isSecureContext: secure, addEventListener() {} }, confirm: () => true,
+    window: { isSecureContext: secure, addEventListener() {} }, confirm: () => true, crypto: globalThis.crypto, structuredClone,
     fetch: (path, options) => { calls.push({ path, ...options }); return new Promise(resolve => pending.push(resolve)); }
   });
   vm.runInContext(`${source}\nglobalThis.testing = { state, dirty };`, context);
@@ -123,4 +123,56 @@ test('發布過期可重新登入，晚到發布回應不能覆蓋登出訊息',
   const finishPublish = env.pending.shift(); env.pending.shift()(response({ loggedOut: true })); await logout;
   const message = env.get('#message').textContent; finishPublish(response({})); await late;
   assert.equal(env.get('#message').textContent, message); assert.equal(env.state.catalog, null);
+});
+
+
+test('後台編輯供應狀態與明確群組類型，糖冰上限固定為一項', async () => {
+  const env = setup(); await signIn(env);
+  const act = dataset => env.get('#editor').listeners.click({ target: { closest: () => ({ dataset }) } });
+  const input = (bind, value, checked) => env.get('#editor').listeners.input({ target: { dataset: { bind }, value, checked } });
+  act({ action: 'add-product' }); act({ action: 'add-topping', i: '0' }); act({ action: 'add-group', i: '0' });
+  const product = env.state.catalog.products[0];
+  assert.match(env.get('#product-list').innerHTML, /data-bind="p\.0\.active" checked/);
+  input('p.0.active', '', false); input('v.0.0.soldOut', '', true); input('t.0.0.active', '', false);
+  assert.equal(product.active, false); assert.equal(product.variants[0].soldOut, true); assert.equal(product.toppings[0].active, false);
+  input('g.0.0.kind', 'sugar'); input('g.0.0.maxSelect', '9');
+  assert.equal(product.optionGroups[0].kind, 'sugar'); assert.equal(product.optionGroups[0].maxSelect, 1);
+  assert.match(env.get('#product-list').innerHTML, /value="sugar" selected/);
+  assert.match(env.get('#product-list').innerHTML, /max="1"[^>]*data-bind="g\.0\.0\.maxSelect"/);
+  input('g.0.0.kind', 'general'); input('g.0.0.maxSelect', '2');
+  assert.equal(product.optionGroups[0].maxSelect, 2);
+});
+
+test('後台共用群組套用、排除、獨立覆寫與恢復繼承，不破壞原範本', async () => {
+  const env = setup(); await signIn(env);
+  const act = dataset => env.get('#editor').listeners.click({ target: { closest: () => ({ dataset }) } });
+  const input = (dataset, checked, value) => env.get('#editor').listeners.input({ target: { dataset, checked, value } });
+  act({ action: 'add-template' }); act({ action: 'add-product' });
+  const group = env.state.catalog.optionGroups[0]; const product = env.state.catalog.products[0];
+  input({ bind: 'r.0.nameZh' }, undefined, '共用冰量'); input({ bind: 'r.0.kind' }, undefined, 'ice');
+  act({ action: 'add-option', template: '0' });
+  input({ templateDefault: '0.1' }, true);
+  assert.deepEqual(Array.from(group.defaultValueIds), [group.values[1].id]);
+  input({ categoryGroup: `0.${group.id}` }, true);
+  assert.deepEqual(Array.from(env.state.catalog.categories[0].optionGroupIds), [group.id]);
+  assert.match(env.get('#product-list').innerHTML, /繼承分類/);
+  input({ exclude: `0.${group.id}` }, true);
+  assert.deepEqual(Array.from(product.excludedOptionGroupIds), [group.id]);
+  act({ action: 'override-group', i: '0', group: group.id });
+  assert.equal(product.optionGroups[0].id, group.id);
+  assert.notEqual(product.optionGroups[0], group); assert.notEqual(product.optionGroups[0].values, group.values);
+  assert.deepEqual(Array.from(product.excludedOptionGroupIds), []);
+  input({ bind: 'g.0.0.nameZh' }, undefined, '獨立冰量');
+  assert.equal(group.nameZh, '共用冰量');
+  assert.match(env.get('#product-list').innerHTML, /單品已覆寫/);
+  act({ action: 'remove-group', template: '0' });
+  assert.equal(env.state.catalog.optionGroups.length, 1, '仍被分類套用的範本不能移除');
+  assert.match(env.get('#message').textContent, /取消分類套用/);
+  act({ action: 'remove-group', i: '0', j: '0' });
+  assert.match(env.get('#product-list').innerHTML, /繼承分類/);
+  input({ exclude: `0.${group.id}` }, true);
+  input({ categoryGroup: `0.${group.id}` }, false);
+  assert.deepEqual(Array.from(product.excludedOptionGroupIds), [], '取消分類套用也清除過期排除關係');
+  act({ action: 'remove-group', template: '0' });
+  assert.equal(env.state.catalog.optionGroups.length, 0);
 });

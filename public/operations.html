@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>IUTRA · 門市營運</title>
+  <link rel="stylesheet" href="/operations.css">
+  <script type="module" src="/operations.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至工作內容</a>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="IUTRA 點餐首頁"><span class="brand-mark">IU</span><span>IUTRA<small>門市營運工作台</small></span></a>
+    <div class="header-actions"><a href="/">返回點餐</a><span id="identity">尚未登入</span><button id="logout" type="button" hidden>登出</button></div>
+  </header>
+  <div class="development-note">開發驗證版本 · 金流、列印與設備須完成實機驗收後才可正式營業。</div>
+  <main id="main" tabindex="-1">
+    <div id="message" role="status" aria-live="polite" aria-atomic="true">請輸入員工帳號與授權設備資料。</div>
+    <section id="pending-panel" class="pending-panel" aria-labelledby="pending-heading" hidden>
+      <h2 id="pending-heading">結果待確認</h2>
+      <p id="pending-description"></p><p>請先核對原操作。未確認前，不可改用另一付款方式或重新收款；重新整理不會解除此限制。</p>
+      <div class="actions"><button id="query-pending" type="button">查詢原操作</button><button id="retry-pending" type="button" class="primary">以原識別重試</button></div>
+      <small id="pending-binding"></small>
+      <form id="recover-secret" hidden autocomplete="off"><label id="recover-secret-label" for="recovery-secret">重新驗證原操作</label><input id="recovery-secret" type="password" autocomplete="off" required><button type="submit">重新驗證後以原識別繼續</button><p>僅補回驗證資料；訂單、對象、金額及操作識別均沿用原紀錄。</p></form>
+    </section>
+    <section id="access" class="access-panel" aria-labelledby="access-heading">
+      <div><h1 id="access-heading">登入並連接設備</h1><p>使用門市授權設備。密碼、設備密鑰與登入憑證只留在此頁記憶體，重新整理後需重新輸入。</p></div>
+      <form id="login-form" autocomplete="off">
+        <div class="fields">
+          <label>員工帳號<input name="loginName" id="login-name" autocomplete="username" required maxlength="64"></label>
+          <label>密碼<input name="password" id="password" type="password" autocomplete="current-password" required></label>
+          <label>設備識別碼（UUID）<input name="deviceId" id="device-id" required spellcheck="false" autocapitalize="off" placeholder="由管理者提供"></label>
+          <label>設備密鑰<input name="deviceKey" id="device-key" type="password" autocomplete="off" required></label>
+        </div>
+        <button class="primary" type="submit">登入工作台</button>
+      </form>
+    </section>
+    <div id="workplace" class="workplace" hidden>
+      <nav id="workflow-nav" aria-label="營運流程"></nav>
+      <div class="work-content">
+        <div class="context-bar"><div><strong id="store-name"></strong><span id="device-name"></span></div><p id="shift-state"></p><button type="button" id="refresh">重新整理紀錄</button></div>
+        <div id="panels"></div>
+      </div>
+    </div>
+  </main>
+  <footer>金額以 VND 顯示。付款成功、退款完成與實際印出皆須分別核對。</footer>
+</body>
+</html>

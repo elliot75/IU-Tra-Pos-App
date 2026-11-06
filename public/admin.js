@@ -36,19 +36,40 @@ function actionError(error) {
     message('登入已失效。草稿已保留在本頁，請使用同一帳號重新登入，再重試原操作。');
   } else message(error.message);
 }
-function field(label, value, binding, type = 'text') { return `<label>${label}<input type="${type}" ${type === 'number' ? 'min="0" max="100" step="1"' : ''} value="${html(value)}" data-bind="${html(binding)}"></label>`; }
+function field(label, value, binding, type = 'text', max = 100) { return `<label>${label}<input type="${type}" ${type === 'number' ? `min="0" max="${max}" step="1"` : ''} value="${html(value)}" data-bind="${html(binding)}"></label>`; }
+function availabilityEditor(value, binding) {
+  return `<div class="availability-fields"><label><input type="checkbox" data-bind="${binding}.active" ${value.active !== false ? 'checked' : ''}> 啟用</label><label><input type="checkbox" data-bind="${binding}.soldOut" ${value.soldOut === true ? 'checked' : ''}> 售罄</label></div>`;
+}
+function groupEditor(g, i, j, template = false) {
+  const binding = template ? `r.${i}` : `g.${i}.${j}`;
+  const attrs = template ? `data-template="${i}"` : `data-i="${i}" data-j="${j}"`;
+  const values = g.values.map((v, k) => {
+    const valueBinding = template ? `u.${i}.${k}` : `o.${i}.${j}.${k}`;
+    const defaultBinding = template ? `data-template-default="${i}.${k}"` : `data-default="${i}.${j}.${k}"`;
+    return `<div class="detail-row option-value">${field('選項中文', v.nameZh, `${valueBinding}.nameZh`)}${field('選項越文', v.nameVi, `${valueBinding}.nameVi`)}<label class="default-option"><input type="checkbox" ${defaultBinding} ${(g.defaultValueIds || []).includes(v.id) ? 'checked' : ''}> 預設選項</label><button class="danger" type="button" data-action="remove-option" ${attrs} data-k="${k}">移除</button></div>`;
+  }).join('');
+  const kind = `<label>群組類型<select data-bind="${binding}.kind">${[['general', '一般'], ['sugar', '糖（最多一項）'], ['ice', '冰（最多一項）']].map(([value, label]) => `<option value="${value}" ${(g.kind || 'general') === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`;
+  return `<div class="option-editor"><div class="subheading"><strong>${template ? '共用群組範本' : '單品選項群組'}</strong><button class="danger" type="button" data-action="remove-group" ${attrs}>移除群組</button></div><div class="group-fields">${field('群組中文', g.nameZh, `${binding}.nameZh`)}${field('群組越文', g.nameVi, `${binding}.nameVi`)}${kind}${field('最少選擇數', g.minSelect, `${binding}.minSelect`, 'number', ['sugar', 'ice'].includes(g.kind) ? 1 : 50)}${field('最多選擇數', g.maxSelect, `${binding}.maxSelect`, 'number', ['sugar', 'ice'].includes(g.kind) ? 1 : 50)}</div>${values}<button class="secondary" type="button" data-action="add-option" ${attrs}>新增選項</button></div>`;
+}
+function inheritedEditor(product, i) {
+  const category = state.catalog.categories.find(c => c.id === product.categoryId);
+  return (category?.optionGroupIds || []).map(groupId => {
+    const group = (state.catalog.optionGroups || []).find(g => g.id === groupId);
+    const overridden = (product.optionGroups || []).some(g => g.id === groupId);
+    return `<div class="inherited-group"><span>${html(group?.nameZh || groupId)}${overridden ? '（單品已覆寫）' : '（繼承分類）'}</span><label><input type="checkbox" data-exclude="${i}.${html(groupId)}" ${(product.excludedOptionGroupIds || []).includes(groupId) ? 'checked' : ''} ${overridden ? 'disabled' : ''}> 排除此群組</label>${overridden ? '' : `<button class="secondary" type="button" data-action="override-group" data-i="${i}" data-group="${html(groupId)}">建立單品覆寫</button>`}</div>`;
+  }).join('');
+}
 function render() {
   $('#revision').textContent = `草稿版本 ${state.revision}`;
-  $('#category-list').innerHTML = state.catalog.categories.length ? state.catalog.categories.map((c, i) => `<div class="category-row">${field('中文名稱', c.nameZh, `c.${i}.nameZh`)}${field('越文名稱', c.nameVi, `c.${i}.nameVi`)}<button class="danger" type="button" data-action="remove-category" data-i="${i}">移除</button></div>`).join('') : '<p class="empty-hint">尚無分類，請先新增分類。</p>';
+  const templates = state.catalog.optionGroups || [];
+  $('#template-list').innerHTML = templates.map((g, i) => groupEditor(g, i, null, true)).join('') || '<p class="empty-hint">尚無共用群組範本。既有商品選項保持獨立設定。</p>';
+  $('#category-list').innerHTML = state.catalog.categories.length ? state.catalog.categories.map((c, i) => `<div class="category-row">${field('中文名稱', c.nameZh, `c.${i}.nameZh`)}${field('越文名稱', c.nameVi, `c.${i}.nameVi`)}<button class="danger" type="button" data-action="remove-category" data-i="${i}">移除</button><div class="category-groups"><strong>套用共用群組（依勾選順序）</strong>${templates.map(g => `<label><input type="checkbox" data-category-group="${i}.${html(g.id)}" ${(c.optionGroupIds || []).includes(g.id) ? 'checked' : ''}> ${html(g.nameZh || '未命名群組')}</label>`).join('') || '<p class="empty-hint">請先建立共用群組範本。</p>'}</div></div>`).join('') : '<p class="empty-hint">尚無分類，請先新增分類。</p>';
   $('#product-list').innerHTML = state.catalog.products.length ? state.catalog.products.map((p, i) => {
     const options = state.catalog.categories.map(c => `<option value="${html(c.id)}" ${c.id === p.categoryId ? 'selected' : ''}>${html(c.nameZh || '未命名分類')}</option>`).join('');
-    const variants = p.variants.map((v, j) => `<div class="detail-row">${field('容量或規格', v.label, `v.${i}.${j}.label`)}${field('完整售價（VND）', v.price, `v.${i}.${j}.price`)}<button class="danger" type="button" data-action="remove-variant" data-i="${i}" data-j="${j}">移除</button></div>`).join('');
-    const toppings = p.toppings.map((t, j) => `<div class="detail-row topping-fields">${field('中文名稱', t.nameZh, `t.${i}.${j}.nameZh`)}${field('越文名稱', t.nameVi, `t.${i}.${j}.nameVi`)}${field('單位', t.unit, `t.${i}.${j}.unit`)}${field('售價（VND）', t.price, `t.${i}.${j}.price`)}${field('上限', t.maxPortions, `t.${i}.${j}.maxPortions`, 'number')}<button class="danger" type="button" data-action="remove-topping" data-i="${i}" data-j="${j}">移除</button></div>`).join('');
-    const groups = (p.optionGroups || []).map((g, j) => {
-      const values = g.values.map((v, k) => `<div class="detail-row option-value">${field('選項中文', v.nameZh, `o.${i}.${j}.${k}.nameZh`)}${field('選項越文', v.nameVi, `o.${i}.${j}.${k}.nameVi`)}<label class="default-option"><input type="checkbox" data-default="${i}.${j}.${k}" ${(g.defaultValueIds || []).includes(v.id) ? 'checked' : ''}> 預設選項</label><button class="danger" type="button" data-action="remove-option" data-i="${i}" data-j="${j}" data-k="${k}">移除</button></div>`).join('');
-      return `<div class="option-editor"><div class="subheading"><strong>選項群組</strong><button class="danger" type="button" data-action="remove-group" data-i="${i}" data-j="${j}">移除群組</button></div><div class="group-fields">${field('群組中文（例如甜度）', g.nameZh, `g.${i}.${j}.nameZh`)}${field('群組越文', g.nameVi, `g.${i}.${j}.nameVi`)}${field('最少選擇數', g.minSelect, `g.${i}.${j}.minSelect`, 'number')}${field('最多選擇數', g.maxSelect, `g.${i}.${j}.maxSelect`, 'number')}</div>${values}<button class="secondary" type="button" data-action="add-option" data-i="${i}" data-j="${j}">新增選項</button></div>`;
-    }).join('');
-    return `<article class="product-card"><div class="card-heading"><h3>${html(p.nameZh || '新商品')}</h3><button class="danger" type="button" data-action="remove-product" data-i="${i}">移除商品</button></div><div class="fields">${field('中文名稱', p.nameZh, `p.${i}.nameZh`)}${field('越文名稱', p.nameVi, `p.${i}.nameVi`)}<label>分類<select data-bind="p.${i}.categoryId">${options}</select></label></div><div class="image-field">${field('商品圖片網址（HTTPS 或本機圖片，留空則不顯示）', p.imageUrl || '', `p.${i}.imageUrl`)}<p class="empty-hint">輸入可公開讀取的圖片網址，儲存並發布後顯示在菜單。此版本尚未提供檔案上傳。</p></div><div class="subheading"><h4>容量與售價</h4><button class="secondary" type="button" data-action="add-variant" data-i="${i}">新增容量</button></div>${variants || '<p class="empty-hint">至少需要一個容量。</p>'}<div class="subheading"><h4>可選配料</h4><button class="secondary" type="button" data-action="add-topping" data-i="${i}">新增配料</button></div>${toppings || '<p class="empty-hint">此商品未設定配料。</p>'}<div class="subheading"><h4>甜度、冰量等選項</h4><button class="secondary" type="button" data-action="add-group" data-i="${i}">新增選項群組</button></div><p class="empty-hint">必選一項請將最少與最多選擇數都設為 1；預設選項不可超過最多選擇數，不足最少選擇數時點餐需補選。選項目前不加價。</p>${groups}</article>`;
+    const variants = p.variants.map((v, j) => `<div class="detail-row">${field('容量或規格', v.label, `v.${i}.${j}.label`)}${field('完整售價（VND）', v.price, `v.${i}.${j}.price`)}${availabilityEditor(v, `v.${i}.${j}`)}<button class="danger" type="button" data-action="remove-variant" data-i="${i}" data-j="${j}">移除</button></div>`).join('');
+    const toppings = p.toppings.map((t, j) => `<div class="detail-row topping-fields">${field('中文名稱', t.nameZh, `t.${i}.${j}.nameZh`)}${field('越文名稱', t.nameVi, `t.${i}.${j}.nameVi`)}${field('單位', t.unit, `t.${i}.${j}.unit`)}${field('售價（VND）', t.price, `t.${i}.${j}.price`)}${field('上限', t.maxPortions, `t.${i}.${j}.maxPortions`, 'number')}${availabilityEditor(t, `t.${i}.${j}`)}<button class="danger" type="button" data-action="remove-topping" data-i="${i}" data-j="${j}">移除</button></div>`).join('');
+    const groups = (p.optionGroups || []).map((g, j) => groupEditor(g, i, j)).join('');
+    return `<article class="product-card"><div class="card-heading"><h3>${html(p.nameZh || '新商品')}</h3><button class="danger" type="button" data-action="remove-product" data-i="${i}">移除商品</button></div><div class="fields">${field('中文名稱', p.nameZh, `p.${i}.nameZh`)}${field('越文名稱', p.nameVi, `p.${i}.nameVi`)}<label>分類<select data-bind="p.${i}.categoryId">${options}</select></label></div>${availabilityEditor(p, `p.${i}`)}<div class="image-field">${field('商品圖片網址（HTTPS 或本機圖片，留空則不顯示）', p.imageUrl || '', `p.${i}.imageUrl`)}<p class="empty-hint">輸入可公開讀取的圖片網址，儲存並發布後顯示在菜單。此版本尚未提供檔案上傳。</p></div><div class="subheading"><h4>容量與售價</h4><button class="secondary" type="button" data-action="add-variant" data-i="${i}">新增容量</button></div>${variants || '<p class="empty-hint">至少需要一個容量。</p>'}<div class="subheading"><h4>可選配料</h4><button class="secondary" type="button" data-action="add-topping" data-i="${i}">新增配料</button></div>${toppings || '<p class="empty-hint">此商品未設定配料。</p>'}<div class="subheading"><h4>甜度、冰量等選項</h4><button class="secondary" type="button" data-action="add-group" data-i="${i}">新增選項群組</button></div><p class="empty-hint">必選一項請將最少與最多選擇數都設為 1；預設選項不可超過最多選擇數，不足最少選擇數時點餐需補選。選項目前不加價。</p>${inheritedEditor(p, i)}${groups}</article>`;
   }).join('') : '<p class="empty-hint">尚無商品。</p>';
   $('#editor').hidden = false;
   dirty(state.dirty);
@@ -93,7 +114,7 @@ $('#logout').addEventListener('click', async () => {
   const token = state.token;
   const epoch = ++state.epoch; // Immediately invalidate every in-flight response.
   state.token = ''; state.catalog = null; state.dirty = false; state.userId = null; state.loginName = ''; state.revision = null;
-  $('#category-list').innerHTML = ''; $('#product-list').innerHTML = ''; $('#password').value = '';
+  $('#category-list').innerHTML = ''; $('#product-list').innerHTML = ''; $('#template-list').innerHTML = ''; $('#password').value = '';
   $('#editor').hidden = true; $('#signed-in').hidden = true; $('#signed-in').textContent = '';
   $('#logout').hidden = true; $('#login-submit').hidden = false; $('#login-submit').textContent = '登入並載入草稿'; $('#revision').textContent = '尚未載入';
   busy(true);
@@ -105,10 +126,30 @@ $('#logout').addEventListener('click', async () => {
 });
 $('#editor').addEventListener('input', event => {
   if (state.busy || !state.token) return;
-  if (event.target.dataset.default !== undefined) {
-    const [i, j, k] = event.target.dataset.default.split('.').map(Number);
-    const group = state.catalog.products[i].optionGroups[j];
-    const valueId = group.values[k].id;
+  if (event.target.dataset.categoryGroup !== undefined) {
+    const [i, groupId] = event.target.dataset.categoryGroup.split('.');
+    const category = state.catalog.categories[Number(i)];
+    category.optionGroupIds = (category.optionGroupIds || []).filter(value => value !== groupId);
+    if (event.target.checked) category.optionGroupIds.push(groupId);
+    else for (const product of state.catalog.products.filter(p => p.categoryId === category.id)) {
+      if (product.excludedOptionGroupIds) product.excludedOptionGroupIds = product.excludedOptionGroupIds.filter(value => value !== groupId);
+    }
+    dirty(); render(); return;
+  }
+  if (event.target.dataset.exclude !== undefined) {
+    const [i, groupId] = event.target.dataset.exclude.split('.');
+    const product = state.catalog.products[Number(i)];
+    if ((product.optionGroups || []).some(g => g.id === groupId)) return;
+    product.excludedOptionGroupIds = (product.excludedOptionGroupIds || []).filter(value => value !== groupId);
+    if (event.target.checked) product.excludedOptionGroupIds.push(groupId);
+    dirty(); return;
+  }
+  if (event.target.dataset.default !== undefined || event.target.dataset.templateDefault !== undefined) {
+    const isTemplate = event.target.dataset.templateDefault !== undefined;
+    const [i, j, k] = (event.target.dataset.templateDefault ?? event.target.dataset.default).split('.').map(Number);
+    const group = isTemplate ? state.catalog.optionGroups[i] : state.catalog.products[i].optionGroups[j];
+    const valueIndex = isTemplate ? j : k;
+    const valueId = group.values[valueIndex].id;
     group.defaultValueIds = (group.defaultValueIds || []).filter(value => value !== valueId);
     if (event.target.checked) group.defaultValueIds.push(valueId);
     dirty();
@@ -122,15 +163,37 @@ $('#editor').addEventListener('input', event => {
   if (path[0] === 't') object = state.catalog.products[Number(path[1])].toppings[Number(path[2])];
   if (path[0] === 'g') object = state.catalog.products[Number(path[1])].optionGroups[Number(path[2])];
   if (path[0] === 'o') object = state.catalog.products[Number(path[1])].optionGroups[Number(path[2])].values[Number(path[3])];
+  if (path[0] === 'r') object = state.catalog.optionGroups[Number(path[1])];
+  if (path[0] === 'u') object = state.catalog.optionGroups[Number(path[1])].values[Number(path[2])];
   const key = path.at(-1);
-  object[key] = ['maxPortions', 'minSelect', 'maxSelect'].includes(key) ? Number(event.target.value) : event.target.value;
+  object[key] = ['active', 'soldOut'].includes(key) ? event.target.checked : ['maxPortions', 'minSelect', 'maxSelect'].includes(key) ? Number(event.target.value) : event.target.value;
+  if (key === 'categoryId' && object.excludedOptionGroupIds) {
+    const inherited = state.catalog.categories.find(c => c.id === object.categoryId)?.optionGroupIds || [];
+    object.excludedOptionGroupIds = object.excludedOptionGroupIds.filter(value => inherited.includes(value));
+  }
+  if (['sugar', 'ice'].includes(object.kind) && ['kind', 'maxSelect'].includes(key)) {
+    object.maxSelect = Math.min(1, object.maxSelect);
+    if (key === 'maxSelect') event.target.value = String(object.maxSelect);
+  }
   dirty();
+  if (key === 'kind' || key === 'categoryId') render();
 });
 $('#editor').addEventListener('click', event => {
   if (state.busy || !state.token) return;
   const button = event.target.closest('[data-action]'); if (!button) return;
   const i = Number(button.dataset.i), j = Number(button.dataset.j), k = Number(button.dataset.k), products = state.catalog.products, categories = state.catalog.categories;
+  const templateIndex = button.dataset.template === undefined ? null : Number(button.dataset.template);
+  const group = templateIndex === null ? products[i]?.optionGroups?.[j] : state.catalog.optionGroups[templateIndex];
+  const newGroup = () => ({ id: id(), kind: 'general', nameZh: '', nameVi: '', minSelect: 1, maxSelect: 1, values: [{ id: id(), nameZh: '', nameVi: '' }] });
   switch (button.dataset.action) {
+    case 'add-template': (state.catalog.optionGroups ||= []).push(newGroup()); break;
+    case 'override-group': {
+      const inherited = (state.catalog.optionGroups || []).find(g => g.id === button.dataset.group);
+      if (!inherited || (products[i].optionGroups || []).some(g => g.id === inherited.id)) return;
+      (products[i].optionGroups ||= []).push(structuredClone(inherited));
+      if (products[i].excludedOptionGroupIds) products[i].excludedOptionGroupIds = products[i].excludedOptionGroupIds.filter(value => value !== inherited.id);
+      break;
+    }
     case 'add-category': categories.push({ id: id(), nameZh: '', nameVi: '' }); break;
     case 'remove-category': if (products.some(p => p.categoryId === categories[i].id)) { message('請先移動或移除這個分類下的商品。'); return; } categories.splice(i, 1); break;
     case 'add-product': if (!categories.length) { message('請先新增分類。'); return; } products.push({ id: id(), categoryId: categories[0].id, nameZh: '', nameVi: '', variants: [{ id: id(), label: '', price: '0' }], toppings: [] }); break;
@@ -139,11 +202,16 @@ $('#editor').addEventListener('click', event => {
     case 'remove-variant': products[i].variants.splice(j, 1); break;
     case 'add-topping': products[i].toppings.push({ id: id(), nameZh: '', nameVi: '', unit: '份', price: '0', maxPortions: 3 }); break;
     case 'remove-topping': products[i].toppings.splice(j, 1); break;
-    case 'add-group': (products[i].optionGroups ||= []).push({ id: id(), nameZh: '', nameVi: '', minSelect: 1, maxSelect: 1, values: [{ id: id(), nameZh: '', nameVi: '' }] }); break;
-    case 'remove-group': products[i].optionGroups.splice(j, 1); break;
-    case 'add-option': products[i].optionGroups[j].values.push({ id: id(), nameZh: '', nameVi: '' }); break;
+    case 'add-group': (products[i].optionGroups ||= []).push(newGroup()); break;
+    case 'remove-group':
+      if (templateIndex === null) products[i].optionGroups.splice(j, 1);
+      else {
+        if (categories.some(c => (c.optionGroupIds || []).includes(group.id))) { message('請先取消分類套用，再移除共用群組範本。'); return; }
+        state.catalog.optionGroups.splice(templateIndex, 1);
+      }
+      break;
+    case 'add-option': group.values.push({ id: id(), nameZh: '', nameVi: '' }); break;
     case 'remove-option': {
-      const group = products[i].optionGroups[j];
       const [removed] = group.values.splice(k, 1);
       if (group.defaultValueIds) group.defaultValueIds = group.defaultValueIds.filter(value => value !== removed.id);
       break;

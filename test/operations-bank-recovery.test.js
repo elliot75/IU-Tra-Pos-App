@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { operationsDatabase } from '../test-support/operations-db.js';
+import { OperationsStore } from '../src/operations.js';
+
+test('已到款儲值保留銀行事實，沿用原來源補入且不重收、不重加',async t=>{
+  const f=await operationsDatabase();t.after(()=>f.close());
+  const store=new OperationsStore(f.pool,{requestHashKey:'bank_recovery_test_secret_0123456789012345'});
+  const call=async(command,input,key=randomUUID())=>(await store.execute(f.auth,key,command,input)).result;
+  const shift=await call('openShift',{openingCash:'0',responsibility:'恢復測試'});
+  await call('setBank',{bankCode:'970436',accountNumber:'1234567890',accountName:'TEST STORE',verified:true,reason:'合成測試',expectedVersion:0,currentPassword:f.password});
+  const member=await call('createMember',{memberCode:'RECOVER',displayName:'測試',pin:'123456'});
+  const request=await call('topup',{walletId:member.wallet.id,shiftId:shift.id,amount:'100000',method:'bank'});
+  await f.pool.query("UPDATE iutra_pos.pos_wallets SET status='frozen' WHERE id=$1",[member.wallet.id]);
+  const result=await call('confirmBank',{id:request.id,externalRef:'RECOVERY-001',amount:'100000',bookedAt:new Date().toISOString(),note:'核實原到款'});
+  assert.equal(result.exception.kind,'funded_pending_credit');
+  assert.equal((await f.pool.query('SELECT COUNT(*)::int AS count FROM iutra_pos.pos_bank_transactions')).rows[0].count,1);
+  assert.equal((await store.list(f.auth,'wallets',{id:member.wallet.id})).principal_balance,'0');
+  await assert.rejects(call('creditFundedTopup',{id:result.exception.id,reason:'仍凍結'}),{status:409});
+  await assert.rejects(call('cancelPayment',{id:request.id,reason:'不可重收'}),{status:409});
+  await assert.rejects(call('reviewException',{id:result.exception.id,resolution:'不可略過'}),{status:409});
+  await f.pool.query("UPDATE iutra_pos.pos_wallets SET status='active' WHERE id=$1",[member.wallet.id]);
+  await f.pool.query("UPDATE iutra_pos.pos_payment_requests SET expires_at=now()-interval '1 minute' WHERE id=$1",[request.id]);
+  await f.pool.query('UPDATE iutra_pos.pos_grants SET permissions=$1 WHERE staff_id=$2',[['bank.confirm'],f.ids.staff]);
+  await assert.rejects(call('creditFundedTopup',{id:result.exception.id,reason:'權限不足'}),{status:403});
+  await f.pool.query('UPDATE iutra_pos.pos_grants SET permissions=$1 WHERE staff_id=$2',[f.permissions,f.ids.staff]);
+  const key=randomUUID(),body={id:result.exception.id,reason:'恢復原已到款儲值'};
+  const credited=await call('creditFundedTopup',body,key);
+  assert.equal(credited.payment.bank_transaction_id,result.exception.bank_transaction_id);
+  assert.deepEqual(await call('creditFundedTopup',body,key),credited);
+  await assert.rejects(call('creditFundedTopup',body),{status:409});
+  assert.equal((await store.list(f.auth,'wallets',{id:member.wallet.id})).principal_balance,'100000');
+  assert.equal((await store.list(f.auth,'entries')).length,1);
+  assert.equal((await store.list(f.auth,'payments')).length,1);
+  assert.equal((await store.list(f.auth,'exceptions',{id:result.exception.id})).status,'reviewed');
+  const report=await store.report(f.auth,shift.id);assert.equal(report.topups,'100000');assert.equal(report.sales,'0');assert.equal(report.expectedCash,'0');
+});

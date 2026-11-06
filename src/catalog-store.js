@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { validateCatalog, validateRevision } from './catalog-validation.js';
+import { validateCatalog, validateRevision, expandCatalog } from './catalog-validation.js';
 import { ValidationError } from './pricing.js';
 
 export class ServiceError extends Error {
@@ -61,8 +61,8 @@ export class CatalogStore {
       if (!result.rows.length) throw unavailable();
       const row = result.rows[0];
       if (Number(row.revision) !== expectedRevision) throw conflict();
-      validateCatalog(row.catalog, { publishing: true });
-      const published = { release: `release-${randomUUID()}`, isExample: false, ...row.catalog };
+      const expanded = expandCatalog(row.catalog, { publishing: true });
+      const published = { release: `release-${randomUUID()}`, isExample: false, ...expanded };
       await client.query('INSERT INTO iutra_pos.catalog_releases (release, catalog) VALUES ($1, $2::jsonb)', [published.release, JSON.stringify(published)]);
       await client.query('UPDATE iutra_pos.catalog_state SET current_release = $1 WHERE singleton = $2', [published.release, true]);
       return published;

@@ -1,0 +1,10 @@
+{
+  "organization": { "id": "00000000-0000-4000-8000-000000000001", "name": "IUTRA 測試組織" },
+  "store": {
+    "id": "00000000-0000-4000-8000-000000000002", "name": "測試門市",
+    "timezone": "Asia/Ho_Chi_Minh", "dayCutoff": 0,
+    "policy": { "walletEnabled": false, "memberVerification": null, "refundEnabled": false, "partialRefunds": false, "refundMax": "0", "dualApproval": true }
+  },
+  "device": { "id": "00000000-0000-4000-8000-000000000003", "name": "測試收銀機", "key": "REPLACE_WITH_A_NEW_RANDOM_DEVICE_SECRET" },
+  "grants": [ { "loginName": "cashier", "role": "cashier", "permissions": ["pos", "print", "reports"] } ]
+}
