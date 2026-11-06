@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { normalizeNote, quoteBody } from '../public/validation.js';
+import { quoteOrder } from '../src/pricing.js';
 
 const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8'))
   .replace(/^import .*\n/gm, '')
@@ -103,4 +104,209 @@ test('點餐預選預設選項、支援舊菜單並送出實際選擇供伺服�
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(context.testing.state.items.length, 1);
   assert.equal(get('#order-error').textContent, '');
+});
+
+test('店員可複製並獨立修改明細，過期編輯不會覆蓋新訂單', async () => {
+  const elements = new Map(), requests = [];
+  const get = key => {
+    if (!elements.has(key)) elements.set(key, { value: '', dataset: {}, listeners: {}, classList: { toggle() {} },
+      addEventListener(type, handler) { this.listeners[type] = handler; }, showModal() {}, close() {},
+      querySelector: get, querySelectorAll: () => [] });
+    return elements.get(key);
+  };
+  const context = vm.createContext({ document: { querySelector: get, querySelectorAll: () => [] },
+    DISPLAY_CHANNEL: 'display', DISPLAY_TIMEOUT: 1000, DISPLAY_HEARTBEAT: 1000, displayId: () => 'session', isDisplayId: () => true,
+    normalizeNote, quoteBody, AbortController, setTimeout, clearTimeout, setInterval() {},
+    fetch: async (_path, options) => {
+      const body = JSON.parse(options.body); requests.push(body);
+      return { ok: true, json: async () => ({ data: { items: body.items.map(item => ({
+        nameZh: '茶', variant: item.variantId, quantity: item.quantity, options: [],
+        toppings: item.toppings.map(t => ({ ...t, nameZh: '珍珠' })), customerNote: item.customerNote,
+        internalNote: item.internalNote, unitPrice: '24000', lineTotal: String(24000 * item.quantity)
+      })), subtotal: '48000', total: '48000' } }) };
+    }
+  });
+  vm.runInContext(`${source}\nglobalThis.testing = { state, openProduct };`, context);
+  const { state } = context.testing;
+  state.catalog = { release: 'release', products: [{ id: 'p', nameZh: '茶', nameVi: 'Trà',
+    variants: [{ id: 'v', label: '大', price: '24000' }], toppings: [{ id: 'pearl', nameZh: '珍珠', unit: '份', price: '5000', maxPortions: 3 }],
+    optionGroups: [{ id: 'ice', nameZh: '冰量', minSelect: 0, maxSelect: 1, values: [{ id: 'less', nameZh: '少冰', nameVi: 'Ít' }, { id: 'normal', nameZh: '正常', nameVi: 'Thường' }] }]
+  }] };
+  state.items = [{ productId: 'p', variantId: 'v', quantity: 2, toppings: [{ id: 'pearl', portions: 2 }], options: [{ groupId: 'ice', valueIds: ['less'] }], customerNote: '顧客', internalNote: '內部' }];
+  const click = (selector, index) => get('#order-items').listeners.click({ target: { closest: query => query === selector ? { dataset: { [selector.slice(6, -1)]: String(index) } } : null } });
+  click('[data-copy]', 0);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.items.length, 2);
+  assert.notEqual(state.items[0], state.items[1]);
+  assert.notEqual(state.items[0].toppings[0], state.items[1].toppings[0]);
+  assert.notEqual(state.items[0].options[0].valueIds, state.items[1].options[0].valueIds);
+  assert.equal(requests.at(-1).items.length, 2);
+  assert.match(get('#order-items').innerHTML, /data-edit="1"/);
+  assert.match(get('#order-items').innerHTML, /data-copy="1"/);
+
+  click('[data-edit]', 1);
+  assert.equal(get('#quantity').textContent, '2');
+  assert.equal(get('#customer-note').value, '顧客');
+  assert.equal(get('#internal-note').value, '內部');
+  assert.match(get('#option-groups').innerHTML, /value="less" checked/);
+  assert.match(get('#toppings').innerHTML, /data-portions="0">2/);
+  const dialog = get('#product-dialog');
+  dialog.querySelector = selector => selector.startsWith('input[name=') ? { value: 'v' } : get(selector);
+  dialog.querySelectorAll = () => [{ value: 'normal' }];
+  state.quantity = 1; state.portions[0] = 1; get('#customer-note').value = '新備註';
+  get('#product-form').listeners.submit({ preventDefault() {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.items[0].quantity, 2);
+  assert.equal(state.items[0].toppings[0].portions, 2);
+  assert.equal(state.items[0].options[0].valueIds[0], 'less');
+  assert.equal(state.items[1].quantity, 1);
+  assert.equal(state.items[1].toppings[0].portions, 1);
+  assert.equal(state.items[1].options[0].valueIds[0], 'normal');
+  assert.equal(requests.at(-1).items[1].customerNote, '新備註');
+
+  click('[data-edit]', 0);
+  state.revision++; // A concurrent customer operation changed the order.
+  get('#product-form').listeners.submit({ preventDefault() {} });
+  assert.match(get('#product-error').textContent, /訂單已變更/);
+  assert.equal(state.items[0].quantity, 2);
+  assert.equal(requests.length, 2);
+});
+
+function editingHarness() {
+  const elements = new Map(), requests = [], deadlines = new Map();
+  let timerId = 0;
+  const get = key => {
+    if (!elements.has(key)) elements.set(key, {
+      value: '', disabled: false, open: false, listeners: {}, classList: { toggle() {} },
+      addEventListener(type, handler) { this.listeners[type] = handler; },
+      showModal() { this.open = true; }, close() { this.open = false; },
+      querySelector: get, querySelectorAll: () => []
+    });
+    return elements.get(key);
+  };
+  let channel;
+  class Channel {
+    constructor() { channel = this; this.sent = []; }
+    postMessage(message) { this.sent.push(structuredClone(message)); }
+  }
+  const context = vm.createContext({
+    document: { querySelector: get, querySelectorAll: () => [] }, BroadcastChannel: Channel,
+    DISPLAY_CHANNEL: 'display', DISPLAY_TIMEOUT: 10000, DISPLAY_HEARTBEAT: 1000,
+    displayId: () => 'session', isDisplayId: () => true,
+    normalizeNote, quoteBody, AbortController, setInterval() {},
+    setTimeout(fn) { const id = ++timerId; deadlines.set(id, fn); return id; },
+    clearTimeout(id) { deadlines.delete(id); },
+    fetch: (_path, options) => new Promise((resolve, reject) => {
+      requests.push({ body: JSON.parse(options.body), signal: options.signal, resolve, reject });
+    })
+  });
+  vm.runInContext(`${source}\nglobalThis.testing = { state, openProduct, showQuote, addCustomerItem, displayRevision: () => displayRevision };`, context);
+  const { state, openProduct, showQuote } = context.testing;
+  state.catalog = { release: 'release', categories: [], products: [{
+    id: 'p', categoryId: 'tea', nameZh: '茶', nameVi: 'Trà',
+    variants: [{ id: 'small', label: '500 ml', price: '22000' }, { id: 'large', label: '700 ml', price: '24000' }],
+    toppings: [{ id: 'pearl', nameZh: '珍珠', nameVi: 'Trân châu', unit: '份', price: '5000', maxPortions: 3 }], optionGroups: []
+  }] };
+  const original = { productId: 'p', variantId: 'small', quantity: 1, toppings: [], options: [], customerNote: '原備註', internalNote: '原內部備註' };
+  state.items = [original];
+  showQuote(quoteOrder({ menuRelease: state.catalog.release, items: state.items }, state.catalog));
+  openProduct('p', 0);
+  const dialog = get('#product-dialog');
+  const controls = [get('input[name="variant"]:checked'), get('#customer-note'), get('#internal-note'), get('.add-button'), get('.close'), get('#disabled-option')];
+  get('#disabled-option').disabled = true;
+  dialog.querySelectorAll = selector => selector === 'input, button' ? controls : [];
+  get('input[name="variant"]:checked').value = 'large';
+  state.quantity = 2; state.portions[0] = 1;
+  get('#customer-note').value = '新備註'; get('#internal-note').value = '新內部備註';
+  return {
+    ...context.testing, get, requests, controls, channel, original, dialog,
+    submit: () => get('#product-form').listeners.submit({ preventDefault() {} }),
+    succeed(index) {
+      const request = requests[index];
+      const data = quoteOrder(request.body, state.catalog);
+      request.resolve({ ok: true, json: async () => ({ data }) });
+    },
+    expire() {
+      assert.equal(deadlines.size, 1);
+      for (const fn of [...deadlines.values()]) fn();
+    }
+  };
+}
+
+for (const failure of ['server', 'network', 'timeout']) {
+  test(`修改試算失敗保留原訂單與輸入，可直接重試：${failure}`, async () => {
+    const env = editingHarness();
+    const { state, get, original, requests, dialog, controls } = env;
+    const before = get('#order-items').innerHTML, revision = state.revision;
+    const pending = env.submit();
+    assert.equal(state.items[0], original);
+    assert.equal(state.revision, revision);
+    assert.equal(dialog.open, true);
+    assert.ok(controls.every(control => control.disabled));
+    await env.submit();
+    assert.equal(requests.length, 1, 'duplicate submission must not issue another quote');
+    let cancelled = false;
+    dialog.listeners.cancel({ preventDefault() { cancelled = true; } });
+    assert.equal(cancelled, true, 'Escape must not dismiss an in-flight save');
+    if (failure === 'server') requests[0].resolve({ ok: false, json: async () => ({ error: { message: '試算拒絕' } }) });
+    else if (failure === 'network') requests[0].reject(new Error('網路中斷'));
+    else env.expire();
+    await pending;
+    assert.equal(state.items[0], original);
+    assert.equal(state.revision, revision);
+    assert.equal(get('#order-items').innerHTML, before);
+    assert.equal(get('#total').textContent, '22.000 ₫');
+    assert.equal(get('#customer-note').value, '新備註');
+    assert.equal(get('#internal-note').value, '新內部備註');
+    assert.equal(state.quantity, 2); assert.equal(state.portions[0], 1);
+    assert.equal(dialog.open, true); assert.equal(state.editing.saving, false);
+    assert.ok(controls.slice(0, -1).every(control => !control.disabled));
+    assert.equal(get('#disabled-option').disabled, true);
+    assert.match(get('#product-error').textContent, /試算拒絕|網路中斷|逾時/);
+    const retry = env.submit();
+    env.succeed(1); await retry;
+    assert.equal(state.items[0].variantId, 'large');
+    assert.equal(state.items[0].quantity, 2);
+    assert.equal(state.items[0].toppings[0].portions, 1);
+    assert.equal(state.items[0].customerNote, '新備註');
+    assert.equal(state.items[0].internalNote, '新內部備註');
+    assert.equal(get('#total').textContent, '58.000 ₫');
+    assert.equal(state.revision, revision + 1);
+    assert.equal(dialog.open, false); assert.equal(state.editing, null);
+    assert.equal(requests.length, 2, 'successful editing must reuse the quote');
+    if (failure === 'timeout') {
+      assert.equal(requests[0].signal.aborted, true);
+      env.succeed(0);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(state.revision, revision + 1);
+      assert.equal(get('#total').textContent, '58.000 ₫');
+    }
+  });
+}
+
+test('修改試算期間顧客成功加單，晚到修改不得覆蓋訂單與客顯', async () => {
+  const env = editingHarness();
+  const { state, get, channel } = env;
+  get('#display-mode').listeners.change({ target: { value: 'touch' } });
+  channel.onmessage({ data: { type: 'request', pair: 'session', nonce: 'customer' } });
+  const pending = env.submit();
+  const customer = env.addCustomerItem({
+    session: 'session', nonce: 'customer', operationId: 'customer-add', revision: env.displayRevision(),
+    item: { ...env.original, internalNote: undefined }
+  });
+  env.succeed(1); await customer;
+  assert.equal(state.items.length, 2);
+  assert.equal(get('#total').textContent, '44.000 ₫');
+  const revision = state.revision;
+  const snapshots = channel.sent.length;
+  env.succeed(0); await pending;
+  assert.equal(state.items.length, 2);
+  assert.equal(state.items[0], env.original);
+  assert.equal(state.revision, revision);
+  assert.equal(channel.sent.length, snapshots, 'stale edit must not broadcast its quote');
+  assert.equal(get('#total').textContent, '44.000 ₫');
+  assert.match(get('#product-error').textContent, /訂單已變更/);
+  assert.equal(env.dialog.open, true);
+  await env.submit();
+  assert.equal(env.requests.length, 2, 'stale editor must require reopening');
 });

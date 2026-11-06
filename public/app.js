@@ -3,7 +3,7 @@ import { normalizeNote, quoteBody } from './validation.js';
 
 const $ = (selector, parent = document) => parent.querySelector(selector);
 const money = value => `${new Intl.NumberFormat('vi-VN').format(BigInt(value))} ₫`;
-const state = { catalog: null, items: [], product: null, quantity: 1, portions: [], revision: 0 };
+const state = { catalog: null, items: [], product: null, quantity: 1, portions: [], revision: 0, editing: null };
 const dialog = $('#product-dialog');
 const escapeHtml = text => String(text).replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[char]);
 
@@ -183,24 +183,30 @@ function showCatalog(catalog) {
   $('#categories').innerHTML = '<button class="category active" type="button">全部品項</button>' + catalog.categories.map(c => `<button class="category" type="button" data-category="${escapeHtml(c.id)}">${escapeHtml(c.nameZh)} <span>${escapeHtml(c.nameVi)}</span></button>`).join('');
   showProducts(); renderOrder();
 }
-function openProduct(id) {
+function openProduct(id, editIndex = null) {
+  if (state.editing?.saving) return;
   const product = state.catalog.products.find(p => p.id === id);
-  if (!product) return;
-  state.product = product; state.quantity = 1; state.portions = product.toppings.map(() => 0);
+  const item = editIndex === null ? null : state.items[editIndex];
+  if (!product || (editIndex !== null && (!item || item.productId !== id))) return;
+  state.product = product;
+  state.editing = item ? { index: editIndex, item, revision: state.revision } : null;
+  state.quantity = item?.quantity ?? 1;
+  state.portions = product.toppings.map(t => item?.toppings.find(selected => selected.id === t.id)?.portions ?? 0);
   $('#dialog-title').textContent = product.nameZh;
   $('#dialog-subtitle').textContent = product.nameVi;
-  $('#variants').innerHTML = product.variants.map((v, i) => `<label class="variant"><span><input name="variant" type="radio" value="${escapeHtml(v.id)}" ${i === 0 ? 'checked' : ''}> ${escapeHtml(v.label)}</span><strong>${money(v.price)}</strong></label>`).join('');
+  $('.add-button', dialog).textContent = item ? '儲存修改' : '加入訂單';
+  $('#variants').innerHTML = product.variants.map((v, i) => `<label class="variant"><span><input name="variant" type="radio" value="${escapeHtml(v.id)}" ${(item ? item.variantId === v.id : i === 0) ? 'checked' : ''}> ${escapeHtml(v.label)}</span><strong>${money(v.price)}</strong></label>`).join('');
   $('#product-error').textContent = '';
-  $('#customer-note').value = ''; $('#internal-note').value = '';
+  $('#customer-note').value = item?.customerNote || ''; $('#internal-note').value = item?.internalNote || '';
   $('#option-groups').innerHTML = (product.optionGroups || []).map((g, i) => {
     const single = g.maxSelect === 1;
-    const defaults = g.defaultValueIds || [];
-    const none = single && g.minSelect === 0 ? `<label class="option-choice"><input type="radio" name="option-group-${i}" value="" ${defaults.length ? '' : 'checked'}> 不選</label>` : '';
-    const choices = g.values.map(v => `<label class="option-choice"><input type="${single ? 'radio' : 'checkbox'}" ${single ? `name="option-group-${i}"` : ''} data-option-group="${i}" value="${escapeHtml(v.id)}" ${defaults.includes(v.id) ? 'checked' : ''} ${g.maxSelect === 0 ? 'disabled' : ''}> ${escapeHtml(v.nameZh)} <span>${escapeHtml(v.nameVi)}</span></label>`).join('');
+    const selected = item ? (item.options.find(option => option.groupId === g.id)?.valueIds || []) : (g.defaultValueIds || []);
+    const none = single && g.minSelect === 0 ? `<label class="option-choice"><input type="radio" name="option-group-${i}" value="" ${selected.length ? '' : 'checked'}> 不選</label>` : '';
+    const choices = g.values.map(v => `<label class="option-choice"><input type="${single ? 'radio' : 'checkbox'}" ${single ? `name="option-group-${i}"` : ''} data-option-group="${i}" value="${escapeHtml(v.id)}" ${selected.includes(v.id) ? 'checked' : ''} ${g.maxSelect === 0 ? 'disabled' : ''}> ${escapeHtml(v.nameZh)} <span>${escapeHtml(v.nameVi)}</span></label>`).join('');
     return `<fieldset><legend>${escapeHtml(g.nameZh)} <small>${g.minSelect ? `至少選 ${g.minSelect} 項` : '可不選'}，最多 ${g.maxSelect} 項</small></legend><div class="option-choices">${none}${choices}</div></fieldset>`;
   }).join('');
-  $('#toppings').innerHTML = product.toppings.length ? product.toppings.map((t, i) => `<div class="topping-row"><span>${escapeHtml(t.nameZh)}<small>${money(t.price)} / ${escapeHtml(t.unit)}，最多 ${t.maxPortions} 份</small></span><div class="stepper"><button type="button" data-topping-index="${i}" data-change="-1" aria-label="減少${escapeHtml(t.nameZh)}">−</button><output data-portions="${i}">0</output><button type="button" data-topping-index="${i}" data-change="1" aria-label="增加${escapeHtml(t.nameZh)}">＋</button></div></div>`).join('') : '<p class="subtext">此商品沒有配料選項。</p>';
-  $('#quantity').textContent = '1';
+  $('#toppings').innerHTML = product.toppings.length ? product.toppings.map((t, i) => `<div class="topping-row"><span>${escapeHtml(t.nameZh)}<small>${money(t.price)} / ${escapeHtml(t.unit)}，最多 ${t.maxPortions} 份</small></span><div class="stepper"><button type="button" data-topping-index="${i}" data-change="-1" aria-label="減少${escapeHtml(t.nameZh)}">−</button><output data-portions="${i}">${state.portions[i]}</output><button type="button" data-topping-index="${i}" data-change="1" aria-label="增加${escapeHtml(t.nameZh)}">＋</button></div></div>`).join('') : '<p class="subtext">此商品沒有配料選項。</p>';
+  $('#quantity').textContent = String(state.quantity);
   dialog.showModal();
 }
 function showQuote(quote) {
@@ -208,7 +214,7 @@ function showQuote(quote) {
   displayRevision++; displayAckAt = 0;
   sendDisplaySnapshot(); updateDisplayStatus();
   $('#item-count').textContent = `${state.items.reduce((sum, item) => sum + item.quantity, 0)} 杯`;
-  $('#order-items').innerHTML = quote.items.map((item, index) => `<div class="order-item"><div class="item-top"><span class="item-name">${escapeHtml(item.nameZh)}</span><strong>${money(item.lineTotal)}</strong></div><p class="item-detail">${escapeHtml(item.variant)} × ${item.quantity} 杯${(item.options || []).map(g => `<br>${escapeHtml(g.nameZh)}：${g.values.map(v => escapeHtml(v.nameZh)).join('、')}`).join('')}${item.toppings.map(t => `<br>${escapeHtml(t.nameZh)} × ${t.portions} 份 / 杯`).join('')}${item.customerNote ? `<br>顧客備註：${escapeHtml(item.customerNote)}` : ''}${item.internalNote ? `<br>內部備註：${escapeHtml(item.internalNote)}` : ''}</p><div class="item-bottom"><small>每杯 ${money(item.unitPrice)}</small><button class="remove" type="button" data-remove="${index}">移除</button></div></div>`).join('');
+  $('#order-items').innerHTML = quote.items.map((item, index) => `<div class="order-item"><div class="item-top"><span class="item-name">${escapeHtml(item.nameZh)}</span><strong>${money(item.lineTotal)}</strong></div><p class="item-detail">${escapeHtml(item.variant)} × ${item.quantity} 杯${(item.options || []).map(g => `<br>${escapeHtml(g.nameZh)}：${g.values.map(v => escapeHtml(v.nameZh)).join('、')}`).join('')}${item.toppings.map(t => `<br>${escapeHtml(t.nameZh)} × ${t.portions} 份 / 杯`).join('')}${item.customerNote ? `<br>顧客備註：${escapeHtml(item.customerNote)}` : ''}${item.internalNote ? `<br>內部備註：${escapeHtml(item.internalNote)}` : ''}</p><div class="item-bottom"><small>每杯 ${money(item.unitPrice)}</small><div class="item-actions"><button type="button" data-edit="${index}">修改</button><button type="button" data-copy="${index}">複製</button><button class="remove" type="button" data-remove="${index}">移除</button></div></div></div>`).join('');
   $('#subtotal').textContent = money(quote.subtotal);
   $('#total').textContent = money(quote.total);
   $('#order-error').textContent = '';
@@ -256,6 +262,9 @@ $('#products').addEventListener('click', async event => {
 });
 $('#categories').addEventListener('click', event => { const button = event.target.closest('button'); if (!button) return; document.querySelectorAll('.category').forEach(b => b.classList.toggle('active', b === button)); showProducts(button.dataset.category); });
 $('.close', dialog).addEventListener('click', () => dialog.close());
+dialog.addEventListener('cancel', event => {
+  if (state.editing?.saving) event.preventDefault();
+});
 dialog.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (button?.dataset.quantity) { state.quantity = Math.max(1, Math.min(100, state.quantity + Number(button.dataset.quantity))); $('#quantity').textContent = state.quantity; }
@@ -265,9 +274,15 @@ dialog.addEventListener('click', event => {
     $(`[data-portions="${index}"]`, dialog).textContent = state.portions[index];
   }
 });
-$('#product-form').addEventListener('submit', event => {
+$('#product-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (state.items.length >= 100) { $('#order-error').textContent = '最多可加入 100 筆明細'; dialog.close(); return; }
+  const editing = state.editing;
+  if (editing?.saving) return;
+  if (editing && (editing.revision !== state.revision || state.items[editing.index] !== editing.item)) {
+    $('#product-error').textContent = '訂單已變更，請關閉後重新選擇明細。';
+    return;
+  }
+  if (!editing && state.items.length >= 100) { $('#order-error').textContent = '最多可加入 100 筆明細'; dialog.close(); return; }
   const options = [];
   for (const [index, group] of (state.product.optionGroups || []).entries()) {
     const valueIds = [...dialog.querySelectorAll(`[data-option-group="${index}"]:checked`)].map(input => input.value);
@@ -278,18 +293,61 @@ $('#product-form').addEventListener('submit', event => {
     if (valueIds.length) options.push({ groupId: group.id, valueIds });
   }
   try {
-    const item = { productId: state.product.id, variantId: $('input[name="variant"]:checked', dialog).value, quantity: state.quantity, toppings: state.product.toppings.flatMap((t, index) => state.portions[index] ? [{ id: t.id, portions: state.portions[index] }] : []), options, customerNote: normalizeNote($('#customer-note').value), internalNote: normalizeNote($('#internal-note').value) };
-    quoteBody(state.catalog.release, [...state.items, item]);
-    state.items.push(item);
-    dialog.close(); void renderOrder();
+    const variant = $('input[name="variant"]:checked', dialog);
+    if (!variant || !state.product.variants.some(v => v.id === variant.value)) throw new Error('請選擇商品規格');
+    const item = { productId: state.product.id, variantId: variant.value, quantity: state.quantity, toppings: state.product.toppings.flatMap((t, index) => state.portions[index] ? [{ id: t.id, portions: state.portions[index] }] : []), options, customerNote: normalizeNote($('#customer-note').value), internalNote: normalizeNote($('#internal-note').value) };
+    const items = [...state.items];
+    if (editing) items[editing.index] = item; else items.push(item);
+    const body = quoteBody(state.catalog.release, items);
+    if (editing) {
+      const catalog = state.catalog;
+      const controls = [...dialog.querySelectorAll('input, button')].map(control => [control, control.disabled]);
+      editing.saving = true;
+      for (const [control] of controls) control.disabled = true;
+      $('#product-error').textContent = '正在確認修改，請稍候⋯';
+      try {
+        const quote = await request('/api/v1/quotes', { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+        if (state.catalog !== catalog || state.revision !== editing.revision || state.items[editing.index] !== editing.item || state.editing !== editing) {
+          throw new Error('訂單已變更，請關閉後重新選擇明細。');
+        }
+        state.items = items;
+        state.revision++;
+        showQuote(quote);
+      } finally {
+        editing.saving = false;
+        for (const [control, disabled] of controls) control.disabled = disabled;
+      }
+    } else {
+      state.items = items;
+      void renderOrder();
+    }
+    state.editing = null;
+    dialog.close();
   } catch (error) { $('#product-error').textContent = error.message; }
 });
 $('#order-items').addEventListener('click', event => {
-  const button = event.target.closest('[data-remove]');
-  if (button) state.items.splice(Number(button.dataset.remove), 1);
-  else if (event.target.closest('[data-clear]')) state.items = [];
-  else return;
-  renderOrder();
+  const edit = event.target.closest('[data-edit]');
+  if (edit) {
+    const index = Number(edit.dataset.edit), item = state.items[index];
+    if (item) openProduct(item.productId, index);
+    return;
+  }
+  const copy = event.target.closest('[data-copy]');
+  if (copy) {
+    const item = state.items[Number(copy.dataset.copy)];
+    if (!item) return;
+    if (state.items.length >= 100) { $('#order-error').textContent = '最多可加入 100 筆明細'; return; }
+    const duplicate = { ...item, toppings: item.toppings.map(t => ({ ...t })), options: item.options.map(group => ({ ...group, valueIds: [...group.valueIds] })) };
+    try { quoteBody(state.catalog.release, [...state.items, duplicate]); }
+    catch (error) { $('#order-error').textContent = error.message; return; }
+    state.items = [...state.items, duplicate];
+  } else {
+    const button = event.target.closest('[data-remove]');
+    if (button) state.items.splice(Number(button.dataset.remove), 1);
+    else if (event.target.closest('[data-clear]')) state.items = [];
+    else return;
+  }
+  void renderOrder();
 });
 try { showCatalog(await request('/api/v1/catalog/published')); }
 catch (error) {
