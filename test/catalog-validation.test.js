@@ -5,11 +5,11 @@ import { validateCatalog } from '../src/catalog-validation.js';
 
 test('商品圖片接受可選的 HTTPS 網址，拒絕不安全的網址', () => {
   const data = structuredClone({ categories: catalog.categories, products: catalog.products });
-  for (const imageUrl of [undefined, '', 'https://images.example.com/tea.jpg?version=1']) {
+  for (const imageUrl of [undefined, '', 'https://images.example.com/tea.jpg?version=1', `/catalog-images/${'a'.repeat(64)}.jpg`]) {
     if (imageUrl === undefined) delete data.products[0].imageUrl; else data.products[0].imageUrl = imageUrl;
     assert.doesNotThrow(() => validateCatalog(data, { publishing: true }));
   }
-  for (const imageUrl of [null, 123, 'http://example.com/a.jpg', 'javascript:alert(1)', 'https://user:password@example.com/a', 'https://example.com/a b', '//example.com/a']) {
+  for (const imageUrl of [null, 123, 'http://example.com/a.jpg', 'javascript:alert(1)', 'https://user:password@example.com/a', 'https://example.com/a b', '//example.com/a', '/catalog-images/../secret.jpg', `/catalog-images/${'a'.repeat(64)}.svg`, `/catalog-images/${'a'.repeat(64)}.jpg?x=1`]) {
     data.products[0].imageUrl = imageUrl;
     assert.throws(() => validateCatalog(data));
   }

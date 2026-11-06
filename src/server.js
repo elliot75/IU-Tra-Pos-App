@@ -30,14 +30,14 @@ function send(res, status, data, requestId) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-request-id': requestId });
   res.end(JSON.stringify(data));
 }
-async function body(req) {
+async function body(req, maxBytes = MAX_REQUEST_BYTES) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size <= MAX_REQUEST_BYTES) chunks.push(chunk);
+    if (size <= maxBytes) chunks.push(chunk);
   }
-  if (size > MAX_REQUEST_BYTES) throw new ValidationError('請求內容過大');
+  if (size > maxBytes) throw new ValidationError('請求內容過大');
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new ValidationError('JSON 格式不正確'); }
 }
 function exactFields(value, names) {
@@ -59,6 +59,18 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
         const content = await readFile(new URL(`../public/${name}`, import.meta.url));
         res.writeHead(200, { 'content-type': type, 'x-content-type-options': 'nosniff', 'cache-control': 'no-store', 'content-security-policy': "default-src 'self'; img-src 'self' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" });
         return res.end(content);
+      }
+      const image = /^\/catalog-images\/([a-f0-9]{64})\.(jpg|png|webp|gif)$/.exec(path);
+      if (req.method === 'GET' && image) {
+        try {
+          const content = await readFile(new URL(`../public/catalog-images/${image[1]}.${image[2]}`, import.meta.url));
+          const type = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif' }[image[2]];
+          res.writeHead(200, { 'content-type': type, 'content-length': content.length, 'x-content-type-options': 'nosniff', 'cache-control': 'public, max-age=31536000, immutable' });
+          return res.end(content);
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+          return send(res, 404, { request_id: requestId, error: { code: 'NOT_FOUND', message: '找不到圖片' } }, requestId);
+        }
       }
       if (req.method === 'GET' && path === '/api/v1/auth/config') return send(res, 200, { request_id: requestId, data: { allowInsecureHttp: authTransport.allowsInsecureHttp(req) } }, requestId);
       const orderPath = path === '/api/v1/order-drafts' || path.startsWith('/api/v1/order-drafts/');
@@ -92,7 +104,7 @@ export function createServer({ pool = null, staffAuth = createStaffAuth(pool), a
       if (req.method === 'GET' && path === '/api/v1/catalog/published') return send(res, 200, { request_id: requestId, data: await store.getPublished() }, requestId);
       if (req.method === 'GET' && path === '/api/v1/admin/catalog') return send(res, 200, { request_id: requestId, data: await store.getDraft() }, requestId);
       if (req.method === 'PUT' && path === '/api/v1/admin/catalog') {
-        const input = await body(req); exactFields(input, ['expectedRevision', 'catalog']);
+        const input = await body(req, 256 * 1024); exactFields(input, ['expectedRevision', 'catalog']);
         return send(res, 200, { request_id: requestId, data: await store.update(input.expectedRevision, input.catalog) }, requestId);
       }
       if (req.method === 'POST' && path === '/api/v1/admin/catalog/publish') {

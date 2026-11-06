@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { mkdir, writeFile, unlink } from 'node:fs/promises';
 import { createServer } from '../src/server.js';
 import { StaffAuthError } from '../src/staff-auth.js';
 import { createAuthTransport } from '../src/auth-transport.js';
@@ -30,6 +31,39 @@ async function request(base, path, { token, method = 'GET', data, headers = {} }
   const res = await fetch(base + path, { method, headers: { ...headers, ...(token ? { authorization: `Bearer ${token}` } : {}), ...(data ? { 'content-type': 'application/json' } : {}) }, ...(data ? { body: JSON.stringify(data) } : {}) });
   return { status: res.status, body: await res.json() };
 }
+
+test('本機商品圖片可讀取，其他路徑不會作為商品圖片提供', async () => {
+  const dir = new URL('../public/catalog-images/', import.meta.url);
+  const name = `${'a'.repeat(64)}.png`;
+  const file = new URL(name, dir);
+  const bytes = Buffer.from('89504e470d0a1a0a', 'hex');
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, bytes, { flag: 'wx' });
+  try {
+    await withServer(async base => {
+      const response = await fetch(`${base}/catalog-images/${name}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'image/png');
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+      assert.equal((await fetch(`${base}/catalog-images/${'b'.repeat(64)}.png`)).status, 404);
+      assert.equal((await fetch(`${base}/catalog-images/${'a'.repeat(64)}.svg`)).status, 404);
+    });
+  } finally { await unlink(file); }
+});
+
+test('管理菜單可接受較大請求，其他端點仍維持大小限制', async () => {
+  await withServer(async base => {
+    const login = await request(base, '/api/v1/sessions', { method: 'POST', data: { loginName: 'manager', password: 'valid-password' } });
+    const headers = { authorization: `Bearer ${login.body.data.token}`, 'content-type': 'application/json' };
+    const oversized = JSON.stringify({ padding: 'a'.repeat(70000) });
+    const catalogResponse = await fetch(base + '/api/v1/admin/catalog', { method: 'PUT', headers, body: oversized });
+    assert.equal((await catalogResponse.json()).error.message, '請求格式不正確');
+    const loginResponse = await fetch(base + '/api/v1/sessions', { method: 'POST', headers, body: oversized });
+    assert.equal((await loginResponse.json()).error.message, '請求內容過大');
+    const maxResponse = await fetch(base + '/api/v1/admin/catalog', { method: 'PUT', headers, body: JSON.stringify({ padding: 'a'.repeat(262145) }) });
+    assert.equal((await maxResponse.json()).error.message, '請求內容過大');
+  });
+});
 
 test('安全模式在驗證前拒絕 HTTP，可信代理須提供 https，客顯模組可載入', async () => {
   const authTransport = createAuthTransport({ mode: 'https-proxy', trustedProxyIps: '127.0.0.1' });
