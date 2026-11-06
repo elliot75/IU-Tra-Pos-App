@@ -15,10 +15,14 @@ const {
 } = require('docx');
 
 const root = path.resolve(__dirname, '..');
-const source = path.resolve(process.argv[2] || path.join(root, 'IUTRA_POS_System_Specification_v1.0.md'));
-const destination = path.resolve(process.argv[3] || path.join(root, 'IUTRA_POS_System_Specification_v1.0.docx'));
+const source = path.resolve(process.argv[2] || path.join(root, 'IUTRA_POS_System_Specification_v1.1.md'));
+const destination = path.resolve(process.argv[3] || source.replace(/\.md$/i, '.docx'));
+if (source === destination) throw new Error('Word output must differ from Markdown source');
 const markdown = fs.readFileSync(source, 'utf8');
 const lines = markdown.split(/\r?\n/);
+const metadata = lines.find(line => /^版本 v\d+\.\d+｜\d{4}-\d{2}-\d{2}｜/.test(line));
+if (!metadata) throw new Error('Missing specification version and date');
+const [, version, date] = /^版本 (v\d+\.\d+)｜(\d{4}-\d{2}-\d{2})｜/.exec(metadata);
 const RED = 'B9232B';
 const INK = '20252B';
 const MUTED = '616B75';
@@ -151,7 +155,7 @@ const header = new Header({ children: [new Paragraph({
 })] });
 const footer = new Footer({ children: [new Paragraph({
   children: [
-    new TextRun({ text: 'v1.0  ·  2026-11-05   |   ', size: 16, color: MUTED, font: FONT }),
+    new TextRun({ text: `${version}  ·  ${date}   |   `, size: 16, color: MUTED, font: FONT }),
     new TextRun({ children: [PageNumber.CURRENT], size: 16, color: MUTED, font: FONT }),
     new TextRun({ text: ' / ', size: 16, color: MUTED, font: FONT }),
     new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 16, color: MUTED, font: FONT }),
@@ -160,7 +164,7 @@ const footer = new Footer({ children: [new Paragraph({
 })] });
 const properties = { page: { size: { width: PAGE_WIDTH, height: PAGE_HEIGHT }, margin: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN, header: 480, footer: 480 } } };
 const doc = new Document({
-  creator: 'IUTRA', title: 'IUTRA POS 系統規格書 v1.0', subject: 'POS / PostgreSQL / 系統需求與設計規格',
+  creator: 'IUTRA', title: `IUTRA POS 系統規格書 ${version}`, subject: 'POS / PostgreSQL / 系統需求與設計規格',
   description: '依開發計劃書編製之繁體中文系統規格，區分確認需求、提案與待定決策。',
   styles: {
     default: {
@@ -187,7 +191,7 @@ const doc = new Document({
         new Paragraph({ children: [new PageBreak()] }),
         new Paragraph({ children: [new TextRun({ text: '目錄', font: FONT, size: 32, bold: true, color: RED })], spacing: { after: 300 } }),
         new TableOfContents('目錄', { hyperlink: true, headingStyleRange: '1-1' }),
-        para('閱讀提示：C 為已確認；P 為原計劃提案；D 為新增設計建議；T 為待確認。各項功能另標示首版、後續或條件式範圍。', { spacing: { before: 360, after: 120, line: 340 } }),
+        para('閱讀提示：C 為已確認；P 為原計劃提案；D 為新增設計建議；T 為待確認；O 為來源觀察；I 為原型實作。O/I 不代表正式驗收。各項功能另標示首版、後續或條件式範圍。', { spacing: { before: 360, after: 120, line: 340 } }),
         new Paragraph({ children: [new PageBreak()] }),
         ...body,
       ],
