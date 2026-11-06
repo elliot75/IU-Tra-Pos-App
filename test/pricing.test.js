@@ -33,6 +33,20 @@ test('商品選項以伺服器名稱建立快照，不影響價格', () => {
   assert.throws(() => quote([{ ...item(), options: [{ groupId: 'ice', valueIds: ['less'] }] }]));
 });
 
+test('糖度與冰量各自最多選一項，伺服器拒絕繞過介面複選', () => {
+  const menu = structuredClone(catalog);
+  menu.products[0].optionGroups = [
+    { id: 'sugar', nameZh: '甜度', nameVi: 'Đường', minSelect: 1, maxSelect: 1, values: [{ id: 'half', nameZh: '半糖', nameVi: 'Nửa' }, { id: 'normal', nameZh: '全糖', nameVi: 'Đủ' }] },
+    { id: 'ice', nameZh: '冰量', nameVi: 'Đá', minSelect: 1, maxSelect: 1, values: [{ id: 'less', nameZh: '少冰', nameVi: 'Ít' }, { id: 'normal', nameZh: '正常冰', nameVi: 'Đủ' }] }
+  ];
+  const quoteOptions = options => quoteOrder({ menuRelease: menu.release, items: [{ ...item(), options }] }, menu);
+  const sugar = { groupId: 'sugar', valueIds: ['half'] };
+  const ice = { groupId: 'ice', valueIds: ['less'] };
+  assert.equal(quoteOptions([sugar, ice]).total, '24000');
+  assert.throws(() => quoteOptions([{ ...sugar, valueIds: ['half', 'normal'] }, ice]));
+  assert.throws(() => quoteOptions([sugar, { ...ice, valueIds: ['less', 'normal'] }]));
+});
+
 test('規格驗收範例：兩杯共 51,000 VND', () => {
   const result = quote([item('oolong-700', [{ id: 'example-topping', portions: 1 }]), item('oolong-500')]);
   assert.equal(result.items[0].lineTotal, '29000');

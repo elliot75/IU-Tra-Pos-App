@@ -72,7 +72,13 @@ function openProduct(id) {
   $('#dialog-subtitle').textContent = product.nameVi;
   $('#variants').innerHTML = product.variants.map((v, i) => `<label class="variant"><span><input name="variant" type="radio" value="${escapeHtml(v.id)}" ${i === 0 ? 'checked' : ''}> ${escapeHtml(v.label)}</span><strong>${money(v.price)}</strong></label>`).join('');
   $('#product-error').textContent = '';
-  $('#option-groups').innerHTML = (product.optionGroups || []).map((g, i) => `<fieldset><legend>${escapeHtml(g.nameZh)} <small>${g.minSelect ? `至少選 ${g.minSelect} 項` : '可不選'}，最多 ${g.maxSelect} 項</small></legend><div class="option-choices">${g.values.map(v => `<label class="option-choice"><input type="checkbox" data-option-group="${i}" value="${escapeHtml(v.id)}" ${(g.defaultValueIds || []).includes(v.id) ? 'checked' : ''}> ${escapeHtml(v.nameZh)} <span>${escapeHtml(v.nameVi)}</span></label>`).join('')}</div></fieldset>`).join('');
+  $('#option-groups').innerHTML = (product.optionGroups || []).map((g, i) => {
+    const single = g.maxSelect === 1;
+    const defaults = g.defaultValueIds || [];
+    const none = single && g.minSelect === 0 ? `<label class="option-choice"><input type="radio" name="option-group-${i}" value="" ${defaults.length ? '' : 'checked'}> 不選</label>` : '';
+    const choices = g.values.map(v => `<label class="option-choice"><input type="${single ? 'radio' : 'checkbox'}" ${single ? `name="option-group-${i}"` : ''} data-option-group="${i}" value="${escapeHtml(v.id)}" ${defaults.includes(v.id) ? 'checked' : ''} ${g.maxSelect === 0 ? 'disabled' : ''}> ${escapeHtml(v.nameZh)} <span>${escapeHtml(v.nameVi)}</span></label>`).join('');
+    return `<fieldset><legend>${escapeHtml(g.nameZh)} <small>${g.minSelect ? `至少選 ${g.minSelect} 項` : '可不選'}，最多 ${g.maxSelect} 項</small></legend><div class="option-choices">${none}${choices}</div></fieldset>`;
+  }).join('');
   $('#toppings').innerHTML = product.toppings.length ? product.toppings.map((t, i) => `<div class="topping-row"><span>${escapeHtml(t.nameZh)}<small>${money(t.price)} / ${escapeHtml(t.unit)}，最多 ${t.maxPortions} 份</small></span><div class="stepper"><button type="button" data-topping-index="${i}" data-change="-1" aria-label="減少${escapeHtml(t.nameZh)}">−</button><output data-portions="${i}">0</output><button type="button" data-topping-index="${i}" data-change="1" aria-label="增加${escapeHtml(t.nameZh)}">＋</button></div></div>`).join('') : '<p class="subtext">此商品沒有配料選項。</p>';
   $('#quantity').textContent = '1';
   dialog.showModal();

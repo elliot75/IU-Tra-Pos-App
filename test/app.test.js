@@ -24,7 +24,7 @@ test('點餐預選預設選項、支援舊菜單並送出實際選擇供伺服�
   const product = { id: 'p', nameZh: '茶', nameVi: 'Tra', variants: [{ id: 'v', label: '700', price: '24000' }], toppings: [], optionGroups: [group] };
   context.testing.state.catalog = { products: [product], release: 'release' };
   context.testing.openProduct('p');
-  assert.match(get('#option-groups').innerHTML, /value="less" checked/);
+  assert.match(get('#option-groups').innerHTML, /type="radio" name="option-group-0" data-option-group="0" value="less" checked/);
   assert.doesNotMatch(get('#option-groups').innerHTML, /value="normal" checked/);
   const dialog = get('#product-dialog');
   dialog.querySelector = selector => selector.startsWith('input[name=') ? { value: 'v' } : get(selector);
@@ -37,4 +37,20 @@ test('點餐預選預設選項、支援舊菜單並送出實際選擇供伺服�
   delete group.defaultValueIds;
   context.testing.openProduct('p');
   assert.doesNotMatch(get('#option-groups').innerHTML, /checked/);
+
+  // Each single-choice group has its own radio name. Optional singles can be cleared;
+  // multi-choice groups continue to use checkboxes.
+  product.optionGroups = [
+    { ...group, id: 'sugar', nameZh: '甜度' },
+    { ...group, id: 'ice', nameZh: '冰量', minSelect: 0, defaultValueIds: ['less'] },
+    { ...group, id: 'extras', nameZh: '其他', minSelect: 0, maxSelect: 2 },
+    { ...group, id: 'disabled', nameZh: '不提供', minSelect: 0, maxSelect: 0 }
+  ];
+  context.testing.openProduct('p');
+  const markup = get('#option-groups').innerHTML;
+  assert.equal((markup.match(/type="radio" name="option-group-0"/g) || []).length, 2);
+  assert.equal((markup.match(/type="radio" name="option-group-1"/g) || []).length, 3);
+  assert.match(markup, /name="option-group-1" value=""[^>]*> 不選/);
+  assert.equal((markup.match(/type="checkbox"\s+data-option-group="2"/g) || []).length, 2);
+  assert.equal((markup.match(/data-option-group="3"[^>]* disabled/g) || []).length, 2);
 });
